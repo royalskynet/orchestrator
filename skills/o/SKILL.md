@@ -135,10 +135,10 @@ dc <task.md> <cwd>; echo "rc=$?"   # 0 = 驗收重跑 K 次全過
 ## 已知坑（實測）
 
 - **`--auto` 必開**：`permission.bash="ask"` 在 headless 下會被自動拒絕 —— 沒這道模型**一跑 bash 就死**（連 `ls` 都過不了），只能靠 write/edit 硬寫。dc 已內建，`DC_NO_AUTO=1` 可關。
-- **`--pure` 必開**：同一模型 4.5s vs 16s（`agentpet.js` 外掛佔 ~11s）。dc 已內建。
-- **`--dir` + `-f` 必給**：任務檔常在專案外，用 `--dir` 指定工作目錄、`-f` 附加任務檔。dc 已內建。
+- **opencode v2 起無 `--pure`**：`--pure` 已移除；dc 改用 `cd` 進工作目錄。dc 已內建。
+- **cd 進工作目錄 + `-f` 必給**：opencode v2 移除 `--dir`；任務檔常在專案外，cd 進工作目錄並以 `-f` 附加任務檔。dc 已內建。
 - **message 必須放最前面**：`-f` 是陣列旗標，會把後續位置參數一起當附件路徑吞掉。
-- **驗收在 `--dir` 的目錄底下跑**：斷言用相對路徑，在呼叫端 cwd 跑會誤判 FAIL。dc 已處理。
+- **驗收在 cd 進的工作目錄底下跑**：斷言用相對路徑，在呼叫端 cwd 跑會誤判 FAIL。dc 已處理。
 - **免費端點會突然掛**：實測 `ling-3.0-flash-fin-free` 回 `Upstream unavailable`。dc 不做自動 fallback，失敗就回報，換模型由呼叫端決定。
 - **模型很慢**：免費池的帳單是 wall-clock 不是 token。單一函式小修 17–20 秒，兩個函式加約束 4 分鐘。長任務不要用 dc。
 - **`504 Upstream idle timeout exceeded` 的根因是單輪閒置，不是總時長**（2026-09-30 實測：7 步工單死在 step 4 的 `uv venv`／`uv pip install`）。對策見上面五條第 1、2 點，不要靠重試硬碰。

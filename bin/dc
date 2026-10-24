@@ -9,12 +9,12 @@
 # 計費分級（見 tier()）：非免費照派但發 TG。做在這裡而不是 opencode config：config 是共用的，
 # 且登入後 opencode models 會連付費模型一起列。
 #
-# 三個原生旗標是實測必要的，不是包裝癖：
+# 兩個原生旗標是實測必要的，不是包裝癖：
 #   --auto   config 的 permission.bash="ask" 在 headless 下會被自動拒絕 —— 沒有 --auto
 #           模型一跑 bash 就死（連 ls 都過不了），只能靠 write/edit 硬寫，實際上等於廢。
 #           執行人本來就要能跑 bash 與驗收，故預設開；DC_NO_AUTO=1 可關（會嚴重降能）。
-#   --pure   同一模型 4.5s vs 16s（agentpet.js 外掛佔 ~11s）
-#   --dir/-f 任務檔常在專案外，用 --dir 指定工作目錄並以 -f 附加，否則模型讀不到任務內容
+#   cd       opencode v2 起旗標改版：sandbox 隔離與指定目錄的舊旗標都沒了，工作目錄由 cd 決定
+#   -f       任務檔常在專案外，以 -f 附加任務檔，否則模型讀不到任務內容
 set -u
 
 # dc 認可的免費模型。suffix 規則（*-free）自動涵蓋未來新增的免費模型；
@@ -321,7 +321,7 @@ out="$(mktemp)" || { echo "dc: mktemp 失敗" >&2; exit 2; }
 # bash 3.2 不能 wait process substitution，所以照舊 | tee，靠 pid 檔／rc 檔拿 opencode 的 pid 與退出碼；
 # wait 的是 tee，它結束時 $out 已寫完，後面 grep DC_TASK_DEFECT 不會讀到半截。
 # --- 越界偵測：同 repo 其他 worktree 不得被改 ---------------------------------
-# --dir 只定 opencode 的起始目錄；模型照工單裡的絕對路徑 Write、bash 帶 workdir，
+# 工作目錄由 cd 決定（opencode v2 旗標改版，舊的 sandbox／指定目錄旗標已移除）；模型照工單裡的絕對路徑 Write、bash 帶 workdir，
 # 照樣寫進主 checkout（2026-10-08 實證：worktree 派工，3 個 commit 落在 main）。
 # 前後各拍一次：其他 worktree 的 HEAD＋status 摘要。正被別的 dc 持鎖的 worktree
 # 本來就會變（dcq 併發派同 repo 不同 worktree），跳過不比。
@@ -377,12 +377,13 @@ pidf="$out.pid"; rcf="$out.rc"
 # 連子程序一起殺：子程序（MCP／LSP 等）還握著 stdout 的話，tee 不會結束，wait 會卡住。
 kill_oc() { local p; p=$(cat "$pidf" 2>/dev/null) || return 0; pkill -TERM -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; return 0; }
 trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf" "$pintmp"' EXIT
-{ sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" opencode run \
+# opencode v2（2026-10）拿掉 pure／dir 旗標：改用 cd 進工作目錄（群組在背景子殼，不影響父殼）
+{ cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" opencode run \
   "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。
 驗收區塊在派工前已被複製釘住並逐行比對：改它只會判 exit 3 篡改，不可能讓你過關。
 驗收區塊本身有誤（怎麼做都不可能通過）時，保留驗收原樣，輸出一行 DC_TASK_DEFECT: <驗收行號> <理由> 後立即結束。" \
-  --pure --print-logs --log-level ERROR --dir "$d" -f "$f" --title "dc: $(basename "$f")" "$@"
+  --print-logs --log-level error -f "$f" --title "dc: $(basename "$f")" "$@"
   echo $? > "$rcf"; } 2>&1 | tee "$out" &
 teepid=$!
 rl=0; started=0; ts=$(date +%s)
