@@ -132,6 +132,11 @@ chk "額度用完不寫 Zen 濫用閘"              "$(cat "$T/zen-gate")" 0
 # 10-25：Go 月額度窗受限時 freecheck 只擋 opencode-go/*，算額度用完、不寫 .ALARM；其他 provider 照跑
 printf '#!/bin/sh\necho %s\n' "'{\"usage\":{\"monthly\":{\"status\":\"rate-limited\",\"percent\":100}}}'" > "$T/bin/curl"; chmod +x "$T/bin/curl"
 chk "Go 額度窗受限不擋 kilo"               "$(try 8 '額度用完' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=kilo/x:free)" 0:yes:fast:nokey
-chk "Go 額度窗受限：Go 模型算額度用完"     "$(try 8 '^dc: 上游額度用完（Go 額度窗受限' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=opencode-go/x-free)" 1:no:fast:key
+chk "Go 額度窗受限：Go 付費模型算額度用完" "$(try 8 '^dc: 上游額度用完（Go 額度窗受限' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=opencode-go/x)" 1:no:fast:key
+chk "Go 額度窗受限：Go 免費模型照跑"       "$(try 8 '額度用完' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=opencode-go/x-free)" 0:yes:fast:nokey
+# dcq 經 symlink 呼叫 dc：freecheck 要照樣找得到（10-25 以前 dirname "$0" 落在 symlink 目錄、靜默略過）
+ln -s "$DC" "$T/dc-link"; DC0="$DC"; DC="$T/dc-link"
+chk "經 symlink 呼叫也跑 freecheck"       "$(try 8 '^dc: 上游額度用完（Go 額度窗受限' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=opencode-go/x)" 1:no:fast:key
+DC="$DC0"
 chk "Go 額度窗受限不寫 .ALARM"             "$([ -e "$DCQ_HOME/.ALARM" ] && echo y || echo n)" n
 exit "$fail"

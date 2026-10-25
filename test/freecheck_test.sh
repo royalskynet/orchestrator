@@ -15,14 +15,15 @@ chmod +x "$T/bin/"*
 export OPENCODE_GO_API_KEY=fake DCQ_HOME="$T/q" PATH="$T/bin:$PATH"
 
 fail=0
-chk() { # name usage want_rc want_alarm
+chk() { # name usage want_rc want_alarm [model]
   rm -f "$T/q/.ALARM"
-  FAKE_USAGE="$2" bin/freecheck longcat-2.5-preview-free >/dev/null 2>&1; rc=$?
+  FAKE_USAGE="$2" bin/freecheck "${5:-longcat-2.5-preview-free}" >/dev/null 2>&1; rc=$?
   a=N; [ -e "$T/q/.ALARM" ] && a=Y
   if [ "$rc" = "$3" ] && [ "$a" = "$4" ]; then echo "PASS $1"; else echo "FAIL $1: rc=$rc alarm=$a want rc=$3 alarm=$4"; fail=1; fi
 }
 chk "percent>0 加白只 WARN" '{"usage":{"weekly":{"status":"ok","percent":5}}}' 0 N
-chk "額度窗受限算額度用完"  '{"usage":{"weekly":{"status":"limited","percent":100}}}' 5 N
+chk "額度窗受限算額度用完"  '{"usage":{"weekly":{"status":"limited","percent":100}}}' 5 N glm-5.3
+chk "額度窗受限 *-free 照跑" '{"usage":{"weekly":{"status":"limited","percent":100}}}' 0 N
 chk "全 0 放行"             '{"usage":{"weekly":{"status":"ok","percent":0}}}' 0 N
 # 目錄消失仍警報（假目錄沒有 longcat）
 printf '#!/bin/sh\ncase "$*" in *usage*) printf "%%s" "$FAKE_USAGE" ;; *) echo "[\\"space-bunny-free\\"]" ;; esac\n' > "$T/bin/curl"

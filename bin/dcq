@@ -1227,7 +1227,7 @@ cmd_run() {
   done
   [ -n "$(ls -A "$Q/pending" 2>/dev/null)" ] || { echo "dcq: pending 是空的"; return 0; }
   [ -e "$Q/.ALARM" ] && die "dcq: 上一輪留下警報（$(cat "$Q/.ALARM")）。確認後刪掉 $Q/.ALARM 再跑"
-  local FCK; FCK="$(dirname "$0")/freecheck"
+  local FCK; FCK="$(dirname "$(readlink -f "$0")")/freecheck"
   # exit 5＝Go 額度窗受限：只有 opencode-go/* 不能派（dc 逐張回額度用完），其他免費模型照跑（10-25）
   if [ -x "$FCK" ]; then DCQ_HOME="$Q" "$FCK" $MODELS; case $? in 0) ;; 5) echo "dcq: Go 額度窗受限，opencode-go/* 這輪會被 dc 擋下，其他照跑" >&2 ;; *) die "dcq: 中止——freecheck 警報" ;; esac; fi
   echo "dcq: 起 $JOBS 個 slot，模型池：${MODELS}（每隻上限 ${MODEL_MAX}、停滯 ${STALL_S}s、總時限 ${JOB_MAX}s）" >&2

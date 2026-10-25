@@ -5,7 +5,8 @@
 # 是「限時」無限，時限到了名字不會變、計費會變。名字是宣告，額度才是事實。
 #
 # 判準（任一成立即警報）：
-#   1. /zen/go/v1/usage 任一窗 status != ok      → lane 受限：exit 5（額度用完，dc 不派這隻、dcq 冷卻到重置）。
+#   1. /zen/go/v1/usage 任一窗 status != ok      → lane 受限：要用的有 Go 付費模型就 exit 5（額度用完，dcq 冷卻到重置）；
+#      全是 *-free 照放行（10-25 M4 實測月額度 rate-limited 時 opencode-go/beam-free 照樣 11s PASS，免費模型不吃額度）。
 #      2026-10-25 起不寫 .ALARM：月額度一用完 .ALARM 就讓整個 dcq 停收單，連 Zen／kilo 等不走 Go 的免費模型也停。
 #   2. /zen/go/v1/usage 任一窗 percent > 0        → 只 WARN（已加白，見下方 case）
 #   3. 要用的 Go 模型從 /models 目錄消失          → 免費池收攤
@@ -62,6 +63,9 @@ else: print("OK")
 case "$verdict" in
   ALARM*)
     msg="${verdict#ALARM }"
+    paid=0; [ $# -gt 0 ] || paid=1
+    for m in "$@"; do case "$m" in *-free|big-pickle) ;; *) paid=1 ;; esac; done
+    [ "$paid" = 1 ] || { echo "freecheck: ${msg}（免費模型不吃 Go 額度，照跑）" >&2; exit 0; }
     echo "freecheck: ${msg}" >&2
     # TG 限流：DC_FREECHECK_TG_EVERY 秒（預設 1 小時）內只推一次，額度沒解除前每次呼叫都會撞到這裡。
     ST="$STATE/.freecheck-tg-last"; now=$(date +%s)

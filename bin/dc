@@ -253,7 +253,7 @@ esac
 # 停止免費就終止並跳警報，不讓它默默轉成付費額度。只查 opencode-go/*：查的是 Go 帳號的額度窗，
 # 10-25 以前每隻都查，Go 月額度用完就連 Zen／kilo／openrouter 也全擋（rc=2）。
 # 額度窗受限（exit 5）照「上游額度用完」回報，dcq 記 why=quota、冷卻這隻，換下一隻。
-FCK="$(dirname "$0")/freecheck"
+FCK="$(dirname "$(readlink -f "$0")")/freecheck"   # dcq 經 ~/.local/bin/dc symlink 呼叫，10-25 以前 dirname "$0" 找不到、靜默略過
 case "$m" in opencode-go/*) if [ -x "$FCK" ]; then
   "$FCK" "${m#*/}"; _fc=$?
   [ "$_fc" = 5 ] && { echo "dc: 上游額度用完（Go 額度窗受限，freecheck），已提早結束" >&2; exit 1; }
