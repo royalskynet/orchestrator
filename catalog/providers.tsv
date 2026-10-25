@@ -7,3 +7,5 @@ opencode-go	4	Go 額度 per-model 各自計，provider 層只防同時開太多 
 google	2	AI Studio 免費層（opencode 原生直連，key 用 opencode.json {file:}）；同一把 key 的 RPM／RPD 各模型分開但 key 共用，2026-10-24 加
 kilo	2	Kilo Gateway 免 key 免費路由（底層 OpenRouter :free），每 IP 200 req/hr，上游忙會 429；2026-10-24 加
 omniroute	6	nim-pool＋or-free 共用此 key（10-20 起 OmniRoute 只走非 OC API）（2026-10-20 使用者定 6）；or-free 單模型仍受 per-model 上限，OpenRouter :free 20 RPM 撞到由 OmniRoute 退避
+nvidia	2	NIM 免費額度直連（opencode {file:} key），每把 key 約 40 RPM，同時兩張就夠撞；2026-10-25 加
+groq	1	Groq 免費方案 8000 TPM，opencode 一次請求約 8k token，同時兩張必撞；2026-10-25 加

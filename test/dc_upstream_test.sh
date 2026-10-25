@@ -129,4 +129,9 @@ chk "Google RPD 不標每分鐘"                "$(try 8 '額度窗口＝每分�
 chk "Google RPM 標每分鐘"                  "$(try 8 '^dc: 額度窗口＝每分鐘' FAKE=grpm DC_FREE_MODEL=google/x)" 1:no:fast:key
 chk "模型輸出提到額度字樣不誤判"           "$(try 8 '上游額度用完' FAKE=quotatalk)" 0:yes:fast:nokey
 chk "額度用完不寫 Zen 濫用閘"              "$(cat "$T/zen-gate")" 0
+# 10-25：Go 月額度窗受限時 freecheck 只擋 opencode-go/*，算額度用完、不寫 .ALARM；其他 provider 照跑
+printf '#!/bin/sh\necho %s\n' "'{\"usage\":{\"monthly\":{\"status\":\"rate-limited\",\"percent\":100}}}'" > "$T/bin/curl"; chmod +x "$T/bin/curl"
+chk "Go 額度窗受限不擋 kilo"               "$(try 8 '額度用完' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=kilo/x:free)" 0:yes:fast:nokey
+chk "Go 額度窗受限：Go 模型算額度用完"     "$(try 8 '^dc: 上游額度用完（Go 額度窗受限' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=opencode-go/x-free)" 1:no:fast:key
+chk "Go 額度窗受限不寫 .ALARM"             "$([ -e "$DCQ_HOME/.ALARM" ] && echo y || echo n)" n
 exit "$fail"

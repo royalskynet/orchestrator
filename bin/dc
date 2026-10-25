@@ -50,7 +50,9 @@ tier() {
     # agnes：2026-10-20 上游下架 agnes-2.0-flash／1.5-flash 整代，免費改成 3.0-flash／2.5-flash（pricing 頁現價 $0）。
     omniroute/or-free|omniroute/go-free|omniroute/nim-pool|omniroute/openai-compatible-chat-agnes/agnes-3.0-flash) echo free ;;
     # 無 OmniRoute 機器的直連兜底（2026-10-24）：openrouter/free 只路由 :free 模型；NIM 免費額度（build.nvidia.com）。
-    openrouter/openrouter/free|nvidia/z-ai/glm-5.3-flash|nvidia/openai/gpt-oss-20b) echo free ;;
+    # 2026-10-25 放寬：openrouter 只認 :free 後綴；NIM 整家走免費額度（無付費方案）；Groq 免費方案（回應頭 8000 TPM／1000 RPD）。
+    # Groq 帳號若升級 Dev tier 就會按量計費，groq/* 這段要改回 metered。
+    openrouter/openrouter/free|openrouter/*:free|nvidia/*|groq/*) echo free ;;
     # 2026-10-24：Kilo Gateway 免 key 只放 :free；AI Studio key 的專案沒開 billing（pro 系列一律 429 quota），flash 走免費層。
     # 那個 Google 專案若開了 billing，google/* 就會按量計費，這行要改回 metered。
     kilo/*:free|google/gemini-*flash*) echo free ;;
@@ -248,11 +250,15 @@ case "$m" in omniroute/*)
 esac
 
 # 名字有 -free 不代表還免費（Go 的免費是限時的）。派工前查一次真實計費狀態，
-# 停止免費就終止並跳警報，不讓它默默轉成付費額度。
+# 停止免費就終止並跳警報，不讓它默默轉成付費額度。只查 opencode-go/*：查的是 Go 帳號的額度窗，
+# 10-25 以前每隻都查，Go 月額度用完就連 Zen／kilo／openrouter 也全擋（rc=2）。
+# 額度窗受限（exit 5）照「上游額度用完」回報，dcq 記 why=quota、冷卻這隻，換下一隻。
 FCK="$(dirname "$0")/freecheck"
-if [ -x "$FCK" ]; then
-  "$FCK" "${m#*/}" || { echo "dc: 中止——freecheck 警報（DC_FREECHECK=off 可強制）" >&2; exit 2; }
-fi
+case "$m" in opencode-go/*) if [ -x "$FCK" ]; then
+  "$FCK" "${m#*/}"; _fc=$?
+  [ "$_fc" = 5 ] && { echo "dc: 上游額度用完（Go 額度窗受限，freecheck），已提早結束" >&2; exit 1; }
+  [ "$_fc" = 0 ] || { echo "dc: 中止——freecheck 警報（DC_FREECHECK=off 可強制）" >&2; exit 2; }
+fi ;; esac
 
 # 上游停滯時 opencode 預設乾等 chunkTimeout（官方 300000ms）。沒設或設太長＝一次停滯
 # 燒 5 分鐘還看不出是卡死還是在想，故派工前先唸一次合併後的 config 並出聲。

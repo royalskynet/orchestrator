@@ -100,8 +100,11 @@ ORT=openrouter/openrouter/free
 o="$(XDG_DATA_HOME="$T/nodata" DCQ_POOL_TAIL=$ORT DCQ_AUTORANK=0 env -u OPENROUTER_API_KEY "$R/bin/dcq" rank 2>&1)"
 echo "$o" | grep -q "剔出池：$ORT" && ok "直連沒 key 剔出兜底層" || bad "直連沒 key 沒剔：$(echo "$o" | grep -E '兜底|剔出')"
 o="$(XDG_DATA_HOME="$T/nodata" OPENROUTER_API_KEY=x DCQ_POOL_TAIL=$ORT DCQ_AUTORANK=0 "$R/bin/dcq" rank 2>&1)"
-echo "$o" | grep -qx "兜底層：$ORT" && ok "直連有 key 進兜底層" || bad "直連有 key 沒進：$(echo "$o" | grep -E '兜底|剔出')"
-mkdir -p "$T/xdg2/opencode"; echo '{"enabled_providers":["omniroute","opencode"]}' > "$T/xdg2/opencode/opencode.json"
+echo "$o" | grep -q "剔出池：$ORT" && ok "直連有 key 但模型沒宣告就剔除" || bad "沒宣告沒剔：$(echo "$o" | grep -E '兜底|剔出')"
+mkdir -p "$T/xdg3/opencode"; echo '{"provider":{"openrouter":{"models":{"openrouter/free":{}}}}}' > "$T/xdg3/opencode/opencode.json"
+o="$(XDG_CONFIG_HOME="$T/xdg3" XDG_DATA_HOME="$T/nodata" OPENROUTER_API_KEY=x DCQ_POOL_TAIL=$ORT DCQ_AUTORANK=0 "$R/bin/dcq" rank 2>&1)"
+echo "$o" | grep -qx "兜底層：$ORT" && ok "直連有 key＋宣告進兜底層" || bad "直連有 key 沒進：$(echo "$o" | grep -E '兜底|剔出')"
+mkdir -p "$T/xdg2/opencode"; echo '{"enabled_providers":["omniroute","opencode"],"provider":{"openrouter":{"models":{"openrouter/free":{}}}}}' > "$T/xdg2/opencode/opencode.json"
 o="$(XDG_CONFIG_HOME="$T/xdg2" XDG_DATA_HOME="$T/nodata" OPENROUTER_API_KEY=x DCQ_POOL_TAIL=$ORT DCQ_AUTORANK=0 "$R/bin/dcq" rank 2>&1)"
 echo "$o" | grep -q "剔出池：$ORT" && ok "enabled_providers 沒開 openrouter 就剔除（M4 情境）" || bad "enabled_providers 沒擋：$(echo "$o" | grep -E '兜底|剔出')"
 

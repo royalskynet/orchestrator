@@ -258,13 +258,13 @@ if [ -z "${DCQ_MODELS:-}" ] && [ "${DCQ_POOLSYNC:-1}" != 0 ] && [ -s "$GO_STATE"
 fi
 # omniroute/<m> 必須同時宣告在 opencode.json 的 provider.omniroute.models，否則 opencode 2 秒 ProviderModelNotFoundError，
 # 兜底首棒形同不存在（fixindex 11136）。沒宣告的在組池時剔除並提示，不派。
-# openrouter/*、nvidia/* 是 opencode 原生直連（無 OmniRoute 的機器用，例如 Grok 雲端）：要有 key（env 或 opencode auth.json）
-# 且 opencode.json 的 enabled_providers 沒把它排除，否則剔除。M4 enabled_providers 只開 omniroute／opencode，所以 M4 不會派到。
+# openrouter/*、nvidia/*、groq/* 是 opencode 直連：要有 key（env 或 opencode auth.json）、opencode.json 的 enabled_providers
+# 沒把它排除，且模型宣告在 provider.<p>.models（:free 與 NIM 的 id models.dev 多半沒收，沒宣告 opencode 會 ProviderModelNotFoundError）。
 # google/*（AI Studio 免費層）同一套：key 可在 env、auth.json，或 opencode.json 的 provider.google.options.apiKey（{file:} 引用）。
 # kilo/*（Kilo Gateway 免 key）不看 key，只看 provider.kilo.models 有沒有宣告＋enabled_providers。
 oc_direct_ok() {
   local p="$1" ocj="$2" var
-  case "$p" in openrouter) var=OPENROUTER_API_KEY ;; nvidia) var=NVIDIA_API_KEY ;; google) var=GEMINI_API_KEY ;; kilo) var="" ;; *) return 1 ;; esac
+  case "$p" in openrouter) var=OPENROUTER_API_KEY ;; nvidia) var=NVIDIA_API_KEY ;; groq) var=GROQ_API_KEY ;; google) var=GEMINI_API_KEY ;; kilo) var="" ;; *) return 1 ;; esac
   if [ -n "$var" ] && [ -z "${!var:-}" ] && ! { [ "$p" = google ] && [ -n "${GOOGLE_GENERATIVE_AI_API_KEY:-}" ]; }; then
     jq -e --arg p "$p" 'has($p)' "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json" >/dev/null 2>&1 \
       || { [ -r "$ocj" ] && jq -e --arg p "$p" '(.provider[$p].options.apiKey // "") != ""' "$ocj" >/dev/null 2>&1; } || return 1
@@ -297,8 +297,8 @@ oc_declared() {
            [ -n "$orhc" ] || { or_alive "$ocj" && orhc=ok || { orhc=down; echo "dcq: OmniRoute（$(jq -r '.provider.omniroute.options.baseURL' "$ocj")）2 秒內無回應，omniroute/* 這次不派" >&2; }; }
            if [ "$orhc" = ok ]; then out="$out $m"; else miss="$miss $m"; fi
          else miss="$miss $m"; fi ;;
-      openrouter/*|nvidia/*|google/*) if oc_direct_ok "${m%%/*}" "$ocj"; then out="$out $m"; else miss="$miss $m"; fi ;;
-      kilo/*) if oc_direct_ok kilo "$ocj" && jq -e --arg k "${m#kilo/}" '.provider.kilo.models[$k]' "$ocj" >/dev/null 2>&1; then out="$out $m"; else miss="$miss $m"; fi ;;
+      google/*) if oc_direct_ok google "$ocj"; then out="$out $m"; else miss="$miss $m"; fi ;;
+      openrouter/*|nvidia/*|groq/*|kilo/*) if oc_direct_ok "${m%%/*}" "$ocj" && jq -e --arg p "${m%%/*}" --arg k "${m#*/}" '.provider[$p].models[$k]' "$ocj" >/dev/null 2>&1; then out="$out $m"; else miss="$miss $m"; fi ;;
       *) out="$out $m" ;;
     esac
   done
@@ -316,8 +316,8 @@ POOL_MISS=""; for _m in $_in; do case " $POOL_TAIL " in *" $_m "*) ;; *) POOL_MI
 # DCQ_POOL_ZEN／DCQ_POOL_TAIL 有設（整條覆寫）時照設定的分層，不搬。
 if [ -z "${DCQ_MODELS:-}" ] && [ "${DCQ_GOFREE_MAIN:-1}" != 0 ] && [ -z "${DCQ_POOL_ZEN+x}" ] && [ -z "${DCQ_POOL_TAIL+x}" ]; then
   _g=""; _t=""
-  # google/*、kilo/*（2026-10-24）同理併進主層：免費、各走自己的 key／IP 閘，不該排在兜底層
-  for _m in $POOL_TAIL; do case "$_m" in opencode-go/*-free|google/*|kilo/*) _g="$_g${_g:+ }$_m" ;; *) _t="$_t${_t:+ }$_m" ;; esac; done
+  # google/*、kilo/*（2026-10-24）、openrouter :free／nvidia／groq（10-25）同理併進主層：免費、各走自己的 key／IP 閘，不該排在兜底層
+  for _m in $POOL_TAIL; do case "$_m" in opencode-go/*-free|google/*|kilo/*|openrouter/*|nvidia/*|groq/*) _g="$_g${_g:+ }$_m" ;; *) _t="$_t${_t:+ }$_m" ;; esac; done
   [ -z "$_g" ] || { MODELS="$MODELS${MODELS:+ }$_g"; POOL_TAIL="$_t"; }
 fi
 POOL_PEN="${DCQ_POOL_PEN-}"   # 手動指定只在不自動排名時有效（測試用）；自動排名會覆寫
@@ -1228,7 +1228,8 @@ cmd_run() {
   [ -n "$(ls -A "$Q/pending" 2>/dev/null)" ] || { echo "dcq: pending 是空的"; return 0; }
   [ -e "$Q/.ALARM" ] && die "dcq: 上一輪留下警報（$(cat "$Q/.ALARM")）。確認後刪掉 $Q/.ALARM 再跑"
   local FCK; FCK="$(dirname "$0")/freecheck"
-  [ ! -x "$FCK" ] || DCQ_HOME="$Q" "$FCK" $MODELS || die "dcq: 中止——freecheck 警報"
+  # exit 5＝Go 額度窗受限：只有 opencode-go/* 不能派（dc 逐張回額度用完），其他免費模型照跑（10-25）
+  if [ -x "$FCK" ]; then DCQ_HOME="$Q" "$FCK" $MODELS; case $? in 0) ;; 5) echo "dcq: Go 額度窗受限，opencode-go/* 這輪會被 dc 擋下，其他照跑" >&2 ;; *) die "dcq: 中止——freecheck 警報" ;; esac; fi
   echo "dcq: 起 $JOBS 個 slot，模型池：${MODELS}（每隻上限 ${MODEL_MAX}、停滯 ${STALL_S}s、總時限 ${JOB_MAX}s）" >&2
   local i
   local pids=() reload=0 p

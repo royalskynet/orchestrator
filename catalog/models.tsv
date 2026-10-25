@@ -7,7 +7,7 @@
 # status：ok＝7 天內有實際成功紀錄；gated＝目前被 Zen 共用閘封鎖（IP 判濫用，閘外會回來；現況看 ~/.dcq/.zen-gate）；flaky＝成功率低；unverified＝本機沒有成功紀錄
 #        status 是人看的註記，dcq 排序只看 gaps.tsv 實績，不讀這欄（2026-10-22 重設：Zen 10-21 起已在閘外實跑）
 # evidence：probe＝~/.dcq/logs/probe.tsv（opencode run 每日探測）；calllog＝OmniRoute call_logs 7 天 成功/總數；auth＝CLI 登入狀態
-# dc_id：dcq 派工時給 dc 的模型名（空＝dcq 不用）。沒有斜線＝Zen（opencode/ 前綴省略）；opencode-go/、omniroute/、openrouter/、nvidia/（直連）照寫。
+# dc_id：dcq 派工時給 dc 的模型名（空＝dcq 不用）。沒有斜線＝Zen（opencode/ 前綴省略）；opencode-go/、omniroute/、openrouter/、nvidia/、groq/、kilo/（直連）照寫。
 # fit：any＝任何難度都派；easy＝只派 easy／mid 工單（改錯、假扮工具、無限迴圈、隨機分配的前科），hard 工單跳過；
 #      easy-only＝只派 easy 工單，mid／hard 都跳過（失敗白等時間遠大於通過價值的）。
 # 列的先後＝同層手排順序（dcq autorank 會依實績重排）。dcq 組池：free 無斜線與 opencode-go/*-free＝免費層（2026-10-22 起 Go 免費併入，DCQ_GOFREE_MAIN=0 關）、free omniroute/＝兜底層、sub＝訂閱層、api＝API 層（DCQ_ALLOW_API=1 才用）。
@@ -36,9 +36,19 @@ free	omniroute	nvidia/openai/gpt-oss-20b	flaky	calllog 6/16	NVIDIA NIM 免費；
 free	omniroute	nvidia/nvidia/nemotron-3-super-120b-a12b	flaky	calllog 4/14	NVIDIA NIM 免費		any
 free	omniroute	nvidia/z-ai/glm-5.3-flash	ok	calllog 1/1	NVIDIA NIM 免費；樣本少		any
 free	omniroute	openai-compatible-chat-agnes/agnes-3.0-flash	ok	curl 1/1 2026-10-20	舊 2.0-flash 整代已被上游下架（500 get_channel_failed）；免費改 3.0-flash（pricing 現價 $0、非 reasoning 模型）。免費層仍有未公開 token 額度（fix 10187），不進 combo／鏈中段（fix 10235）		any
-free	opencode-run	openrouter/openrouter/free	unverified		opencode 原生直連，無 OmniRoute 機器用（Grok 雲端）；要 OPENROUTER_API_KEY 且 enabled_providers 不擋；同 or-free 隨機分配前科	openrouter/openrouter/free	easy-only
-free	opencode-run	nvidia/z-ai/glm-5.3-flash	unverified		opencode 原生直連 NIM，無 OmniRoute 機器用；要 NVIDIA_API_KEY	nvidia/z-ai/glm-5.3-flash	any
-free	opencode-run	nvidia/openai/gpt-oss-20b	unverified		opencode 原生直連 NIM；M4 經 nim-pool 是 flaky	nvidia/openai/gpt-oss-20b	easy
+free	opencode-run	openrouter/openrouter/free	unverified		opencode 原生直連，無 OmniRoute 機器用（Grok 雲端）；要 OPENROUTER_API_KEY 且 enabled_providers 不擋；同 or-free 隨機分配前科；10-25 直連 :free 15 隻 dc pong 全 1–4s 失敗：帳號 guardrail「Provider not allowed by guardrail」（openrouter.ai 帳號資料政策要開）；dc_id 先清空（兩台都沒開 openrouter），guardrail 開了再填回		easy-only
+free	opencode-run	nvidia/z-ai/glm-5.3-flash	ok	dc pong PASS 42s（M4 10-25）	opencode 直連 NIM（免費額度）；要 NVIDIA_API_KEY	nvidia/z-ai/glm-5.3-flash	any
+free	opencode-run	nvidia/openai/gpt-oss-20b	ok	dc pong PASS 33s（M4 10-25）	opencode 直連 NIM；M4 經 nim-pool 是 flaky	nvidia/openai/gpt-oss-20b	easy
+free	opencode-run	nvidia/deepseek-ai/deepseek-v4.1-flash	ok	dc pong PASS 50s（M4 10-25）	opencode 直連 NIM；Zen 也有同款 -free；10-25 加，交 autorank	nvidia/deepseek-ai/deepseek-v4.1-flash	any
+free	opencode-run	nvidia/minimaxai/minimax-m3.1-flash	ok	dc pong PASS 12s（M4 10-25）	opencode 直連 NIM；Zen 也有同款 -free；10-25 加，交 autorank	nvidia/minimaxai/minimax-m3.1-flash	any
+free	opencode-run	nvidia/nvidia/nemotron-3-ultra-550b-a55b	ok	dc pong PASS 18s（M4 10-25）	opencode 直連 NIM；kilo 也有同款 :free；10-25 加，交 autorank	nvidia/nvidia/nemotron-3-ultra-550b-a55b	any
+free	opencode-run	nvidia/nvidia/nemotron-3.5-lightning-30b-a3b	ok	dc pong PASS 10s（M4 10-25）	opencode 直連 NIM；10-25 加，交 autorank	nvidia/nvidia/nemotron-3.5-lightning-30b-a3b	any
+free	opencode-run	nvidia/moonshotai/kimi-k2.6	flaky	dc pong 2s 失敗：opencode「Unexpected server error」（10-25）	opencode 直連 NIM；不派，重測過了再填 dc_id		any
+free	opencode-run	nvidia/z-ai/glm-5.3	flaky	dc pong 240s 逾時（10-25）	opencode 直連 NIM；不派，重測過了再填 dc_id		any
+free	opencode-run	nvidia/nvidia/nemotron-3-super-120b-a12b	flaky	dc pong 2s 失敗：NIM 回 Not Found（/models 有列但沒在服務，10-25）	opencode 直連 NIM；不派，重測過了再填 dc_id		any
+free	opencode-run	groq/openai/gpt-oss-20b	ok	dc pong PASS 57s（M4 10-25）	Groq 免費方案 8000 TPM／1000 RPD，opencode 一次請求約 8k token，只放 easy；要 GROQ_API_KEY；帳號升 Dev tier 會按量計費	groq/openai/gpt-oss-20b	easy-only
+free	opencode-run	groq/openai/gpt-oss-120b	flaky	dc pong 失敗：Request too large，TPM Limit 8000 Requested 8051（10-25）	Groq 免費方案塞不下 opencode 的請求；不派		any
+free	opencode-run	groq/qwen/qwen3.8-27b	flaky	dc pong 240s 逾時（10-25）	Groq 免費方案；不派		any
 free	opencode-run	google/gemini-3.6-flash	ok	opencode run 1/1 OK 2s；tool_call OK（10-24）	AI Studio 免費層；10-24 加，依能力手排，之後交 autorank	google/gemini-3.6-flash	any
 free	opencode-run	google/gemini-3.5-flash	ok	curl tool_call OK 1.6s（10-24）	AI Studio 免費層；10-24 加，依能力手排，之後交 autorank	google/gemini-3.5-flash	any
 free	opencode-run	kilo/nvidia/nemotron-3-ultra-550b-a55b:free	ok	opencode run 1/1 OK 26s；tool_call OK（10-24）	Kilo 免 key（底層 OpenRouter :free）；10-24 加，依能力手排，之後交 autorank	kilo/nvidia/nemotron-3-ultra-550b-a55b:free	any

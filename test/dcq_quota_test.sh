@@ -108,5 +108,11 @@ if grep -q $'\tomniroute/' "$T/cat/models.tsv"; then
   ck "健康檢查結果有快取" '[ "$(cat "$H/@omniroute.hc")" = down ]'
 fi
 
+# 10-25：Go 額度窗受限（freecheck exit 5）只 WARN，dcq run 照跑非 Go 模型；不寫 .ALARM
+printf '#!/bin/sh\necho %s\n' "'{\"usage\":{\"monthly\":{\"status\":\"rate-limited\",\"percent\":100}}}'" > "$T/bin/curl"; chmod +x "$T/bin/curl"
+add goq w3; DC_FREECHECK=on OPENCODE_GO_API_KEY=fake run "kilo/ok1"
+ck "Go 額度窗受限 dcq run 不中止" '[ "$(tried goq kilo/ok1)" -ge 1 ] && grep -q "Go 額度窗受限" "$T/run.out"'
+ck "Go 額度窗受限不寫 .ALARM" '[ ! -e "$DCQ_HOME/.ALARM" ]'
+
 [ "$fail" = 0 ] || { echo "--- run.out"; tail -30 "$T/run.out"; echo "--- rank"; printf '%s\n' "$tbl"; exit 1; }
 echo QUOTA_OK

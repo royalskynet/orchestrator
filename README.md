@@ -82,11 +82,11 @@ The rest of this README is in Traditional Chinese.
 
 **名字有 `-free` 不代表還免費。** Go 的免費是「限時」無限，時限到了 id 不會變、計費會變。所以名字比對只是第一層，真正的判準是額度：
 
-`bin/freecheck` 在 `dc` 每次派工前、`dcq run` 開跑前各查一次 `https://opencode.ai/zen/go/v1/usage`，任一成立就警報：
+`bin/freecheck` 在 `dc` 每次派 `opencode-go/*` 前、`dcq run` 開跑前各查一次 `https://opencode.ai/zen/go/v1/usage`（查的是 Go 帳號，Zen／kilo／nvidia 等不走 Go 的不查）：
 
 | 判準 | 意思 |
 |---|---|
-| 任一窗 `status != ok` | Go 額度窗受限，再跑只會排隊或轉付費 |
+| 任一窗 `status != ok` | Go 額度窗受限：exit 5，不寫 `.ALARM`。`dc` 回「上游額度用完」（dcq 記 why=quota、冷卻這隻），`dcq run` 只 WARN，其他免費模型照跑（2026-10-25 起；以前整隊停，Go 月額度一用完 of 全停） |
 | 任一窗 `percent > 0` | 免費模型開始吃 Go 付費額度 |
 | 要用的 Go 模型從 `/models` 消失 | 免費池收攤 |
 
