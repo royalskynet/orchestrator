@@ -56,9 +56,10 @@ The rest of this README is in Traditional Chinese.
 設好的預設（不是新能力，但沒有它們 dc 根本不會動）：
 
 - **`--auto`**：`permission.bash="ask"` 在 headless 下會被自動拒絕 —— 沒這道模型**一跑 bash 就死**（連 `ls` 都過不了），只能靠 write/edit 硬寫。執行人本來就要能跑 bash，故預設開；`DC_NO_AUTO=1` 可關（會嚴重降能）。
-- **cd 進工作目錄 + `-f`**：opencode v2 移除 `--pure`／`--dir`；dc 改用 `cd` 進工作目錄，`-f` 附加任務檔（任務檔常在專案外）。
+- **`--pure`**：同模型 4.5s vs 16s（`agentpet.js` 外掛佔 ~11s）。
+- **`--dir` + `-f`**：任務檔常在專案外，用 `--dir` 指定工作目錄、`-f` 附加任務檔。
 - **message 放最前面**：`-f` 是陣列旗標，會把後續位置參數當附件路徑吞掉。
-- **驗收在 cd 進的工作目錄底下跑**：驗收斷言用相對路徑，在呼叫端 cwd 跑會全部找不到檔案而誤判 FAIL。
+- **驗收在 `--dir` 的目錄底下跑**：驗收斷言用相對路徑，在呼叫端 cwd 跑會全部找不到檔案而誤判 FAIL。
 
 **如果你只是要 opus 等級的模型跑一次、不在乎成敗由誰判定，直接用 `opencode run`。** dc 的價值在「完成」是機械判定的。
 

@@ -17,10 +17,11 @@ export DC_FREECHECK=off DC_NO_TIMEOUT_WARN=1 DC_NEGCTL=0
 unset DC_LOCK_HELD
 export TRACE="$T/trace"; : > "$TRACE"
 
-# 假 opencode：dc v2 用 cd 進工作目錄，故取 $PWD
+# 假 opencode：記下 --dir 的值與進出
 cat > "$T/bin/opencode" <<'EOF'
 #!/usr/bin/env bash
-d="$PWD"
+d=""; prev=""
+for a in "$@"; do [ "$prev" = "--dir" ] && d="$a"; prev="$a"; done
 echo "IN $d" >> "$TRACE"
 sleep "${FAKE_OC_SLEEP:-2}"
 echo "OUT $d" >> "$TRACE"
