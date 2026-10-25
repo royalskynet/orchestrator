@@ -3,6 +3,7 @@
 # 冷卻到期要再派前查清單：清單沒有 → 再停 1 小時；清單有 → 恢復派工。
 # Go 清單＝go-sync 強制掃（節流），Zen 清單＝GET /zen/v1/models（節流），抓不到才退回 `opencode models opencode`。
 set -u
+. "$(dirname "$0")/env.sh"
 T="$(mktemp -d)"; trap '[ -n "${KEEP:-}" ] && echo "T=$T" || rm -rf "$T"' EXIT
 export DCQ_HOME="$T/q"; mkdir -p "$T/bin" "$T/w1" "$T/w2" "$T/w3" "$T/w4" "$T/w5"
 export DC_BIN="$T/bin" PATH="$T/bin:$PATH"

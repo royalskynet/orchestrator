@@ -3,6 +3,7 @@
 # 沒輸出也沒改檔，被 spin／slow 殺掉重跑，WO-1/2 二十個嘗試全滅）。
 # 假 dc 底下掛一支叫 opencode 的程序（複製 /bin/sh），它的子程序 sleep＝工具在跑。不打上游。
 set -u
+. "$(dirname "$0")/env.sh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DCQ_HOME="$T/q"; mkdir -p "$T/bin" "$T/xb"

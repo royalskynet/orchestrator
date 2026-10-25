@@ -3,6 +3,7 @@
 # 斷言四件：1) 同 cwd 第二個 dc 不啟動  2) 不同 cwd 可併發
 #          3) 孤兒鎖（pid 已死）會被清掉  4) DC_LOCK_HELD=1 不重複拿鎖
 set -u
+. "$(dirname "$0")/env.sh"
 OC="$(cd "$(dirname "$0")/.." && pwd)/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"   # 不讀真的全域閘（10-19：Jev 閘封鎖時這些測試全掛）

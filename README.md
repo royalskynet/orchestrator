@@ -8,6 +8,8 @@
 - **完成由腳本判定**：exit code＝工單自帶驗收腳本（`wo-verify`）的結果，不是模型自述。
 - `dc` 派單張，`dcq` 併發跑多張（cwd 互斥、per-model 冷卻、停滯 watchdog、Zen 與 Go 免費額度分開計）。
 
+這個 repo 是私有正本的脫敏鏡像，每週自動同步覆蓋。直接 push 到這裡的修補會在下次同步被倒回（issue #14）；同步腳本現在遇到這種 commit 會停推並告警，但修補仍要開 issue 或 PR，由維護者移植進正本。
+
 舊名 dispatch-router（2026-10-22 改名）；底層指令 `dc`／`dcq` 不變。與 [`deep-agent`](https://github.com/royalskynet/deep-agent) 平行：deep 走 deepclaude 在沙箱外跑多步自主任務。
 
 ## Quick install／快速安裝
@@ -56,10 +58,10 @@ The rest of this README is in Traditional Chinese.
 設好的預設（不是新能力，但沒有它們 dc 根本不會動）：
 
 - **`--auto`**：`permission.bash="ask"` 在 headless 下會被自動拒絕 —— 沒這道模型**一跑 bash 就死**（連 `ls` 都過不了），只能靠 write/edit 硬寫。執行人本來就要能跑 bash，故預設開；`DC_NO_AUTO=1` 可關（會嚴重降能）。
-- **`--pure`**：同模型 4.5s vs 16s（`agentpet.js` 外掛佔 ~11s）。
-- **`--dir` + `-f`**：任務檔常在專案外，用 `--dir` 指定工作目錄、`-f` 附加任務檔。
+- **`--pure`**：同模型 4.5s vs 16s（`agentpet.js` 外掛佔 ~11s）。opencode v2 移除了它，dc 看 `opencode run --help` 自動決定帶不帶。
+- **cd 進工作目錄 + `-f`**：任務檔常在專案外，dc 先 cd 進工作目錄（1.18.x 另帶 `--dir`；v2 已移除），`-f` 附加任務檔。
 - **message 放最前面**：`-f` 是陣列旗標，會把後續位置參數當附件路徑吞掉。
-- **驗收在 `--dir` 的目錄底下跑**：驗收斷言用相對路徑，在呼叫端 cwd 跑會全部找不到檔案而誤判 FAIL。
+- **驗收在工作目錄底下跑**：驗收斷言用相對路徑，在呼叫端 cwd 跑會全部找不到檔案而誤判 FAIL。
 
 **如果你只是要 opus 等級的模型跑一次、不在乎成敗由誰判定，直接用 `opencode run`。** dc 的價值在「完成」是機械判定的。
 
@@ -226,6 +228,8 @@ dcq cancel <job-id>               # 取消一張（殺整棵程序樹、階梯�
 
 自檢（都用假的下游，不打上游）：`./test/dcq_test.sh`（佇列、模型池、權重 fallback、冷卻、併發槽、watchdog、防空轉、cancel）、`./test/dc_lock_test.sh`（cwd 鎖）、`./test/dc_model_test.sh`（模型閘：哪些准派、哪些要拒）
 
+每支測試開頭 source `test/env.sh`：清掉呼叫端的 `DC_*`／`DCQ_*`／`JEV_*`／`OPENCODE_*`，`XDG_CONFIG_HOME` 指到空的 fixture。所以在 dcq 工單裡（worker 帶著 `DC_FREE_MODEL` 等變數）跑測試，結果跟在乾淨 shell 一樣，也不受本機 `opencode.json` 影響（issue #13）。
+
 跑全套時每支的 rc 要先存進變數再印：`for f in test/*.sh; do bash "$f" >/dev/null 2>&1; rc=$?; echo "$f rc=$rc"; done`。寫成 `echo "$(basename $f) rc=$?"` 的話，`$?` 拿到的是 `basename` 的 0，全部會顯示通過（2026-10-21 踩過）。
 
 ### 同一個 repo 的多張工單要併發：一張一個 git worktree
@@ -259,6 +263,14 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 - API 層：`api`，`DCQ_ALLOW_API=1` 才接，預設不用。
 
 兜底層與訂閱層也做層內排序（2026-10-21），規則同免費層：依每 PASS 秒數升冪，停滯率過高或 0 PASS 的墊該層最後，樣本不足留原位。只在層內排，不跨層搬。`DCQ_MODELS` 有設或 `DCQ_AUTORANK=0` 就不排。
+
+### 額度用完、免費池縮水（2026-10-25）
+
+- **額度用完不算模型失敗**：`dc` 看到 `Free usage limit reached`（Zen）、`Go usage limit exceeded`、Google 的 `Quota exceeded`／`RESOURCE_EXHAUSTED` 就提早結束，dcq 記 `why=quota`，不進 `.fails`、不拉低排名（issue #8）。限流與上游不可用記 `why=upstream`，同樣不算樣本。
+- **Zen 額度整池冷卻到 UTC 午夜**（台灣 08:00）：Zen 免費額度按**出口 IP** 計，不分模型，同一台機器（或同一出口的多台）共用一份。撞到一次就整個 Zen 池停到重置，`dcq plan` 首行會寫「Zen 免費池冷卻到 HH:MM」（#10）。多機共用冷卻沒做：同出口的另一台要自己撞一次才知道。
+- **Google AI Studio**：每日額度（RPD）冷到太平洋時間午夜，每分鐘額度（RPM）只冷 120 秒（`DCQ_QUOTA_RPM_COOL_S`）。免費層 RPD 很小（個位數到幾十次），只適合放兜底；免費層的輸入可能被 Google 用於改進產品，機敏工單別派（#11）。
+- **免費池剔出看得到**：`dcq plan` 首行印各 provider 數與剔出名單。清冊同步會帶進新 provider，各機 `opencode.json` 卻不會跟著改，所以清冊有、本機沒宣告的只要 1 隻（`DCQ_MISS_ALERT`），或主層只剩一家 provider，`dcq plan`／`dcq add` 就印 WARN 並推 TG；同一天名單沒變只推一則（#9）。`dcq doctor` 做同樣的健檢：被 `enabled_providers`／`disabled_providers` 刻意關掉的列為「略過」，其餘剔出算壞、exit 1。`dcq doctor --fix` 另印 `opencode.json` 補丁（key 用 `{env:}` 引用），用 `jq -s '.[0] * .[1]'` 併入。
+- **OmniRoute 健康檢查**：組池時對 `baseURL/models` 打一次（2 秒、結果快取 `DCQ_OR_HC_S`=120 秒），連不到就這次不派 `omniroute/*`（#12）。OmniRoute 在遠端、本機是 userspace Tailscale（沒有 TUN 介面）時，curl 與 opencode 都要走 Tailscale 的 SOCKS5／HTTP proxy：在 dcq 的環境設 `ALL_PROXY`／`HTTPS_PROXY`，否則健康檢查判掛、模型也連不到。`DCQ_OR_HC=0` 關閉檢查。
 
 Claude Code、Codex 也在清冊裡（`sub`），但它們不是 opencode 模型，dcq 不派；由主 session 的 Agent 工具或 `codex exec` 直接用。
 

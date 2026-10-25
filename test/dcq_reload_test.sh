@@ -3,6 +3,7 @@
 # 做法：測試用 bin/dcq 副本；假 dc 在第一張工單裡 touch 副本。期望：第一張跑完（不打斷）、
 # runner 印重啟訊息並 exec 自己、第二張在新 process 跑完。不碰真佇列 ~/.dcq。
 set -u
+. "$(dirname "$0")/env.sh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DCQ_HOME="$T/q"; mkdir -p "$T/bin"

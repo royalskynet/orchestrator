@@ -3,6 +3,7 @@
 # 1) 停滯率 ≥30% 的合格模型降到最後  2) 合格者在自己的位置裡依「每 PASS 秒數」重排（等待時間算進去）
 # 3) 樣本不足的留在手排位置；rc=2 不算樣本；DCQ_AUTORANK=0 照手排
 set -u
+. "$(dirname "$0")/env.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"   # 不讀真的全域閘（10-19：Jev 閘封鎖時這些測試全掛）
 export DCQ_HOME="$T/q"; mkdir -p "$DCQ_HOME/logs"

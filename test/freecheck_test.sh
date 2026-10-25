@@ -2,6 +2,7 @@
 # freecheck 判準自檢：假 curl 回指定 usage，不打上游、不發推播。
 # 斷言加白語意：percent>0 只 WARN 不停單；額度窗受限仍警報；全 0 放行。
 set -u
+. "$(dirname "$0")/env.sh"
 cd "$(dirname "$0")/.."
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir "$T/bin"

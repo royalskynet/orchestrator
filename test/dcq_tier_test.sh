@@ -3,6 +3,7 @@
 # 斷言：1) 清冊組出各層、API 層預設關  2) hard 工單不派 fit=easy  3) provider 上限 1 時同 provider 不重疊
 #       4) gaps.tsv 帶難度、排名依難度分開  5) 難度入列：給的照收、亂給拒收、triage 不在就 mid
 set -u
+. "$(dirname "$0")/env.sh"
 R="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DCQ_HOME="$T/q" DC_BIN="$T/bin" PATH="$T/bin:$PATH" DCQ_CATALOG="$T/cat"

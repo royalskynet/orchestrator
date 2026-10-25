@@ -3,6 +3,7 @@
 # fixture task files, one with a 禁令 left in the body and one with it moved into the
 # 「## 禁止」 section. Run: test/deep_lint_test.sh
 set -uo pipefail
+. "$(dirname "$0")/env.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/deep-lint-test.XXXXXX")

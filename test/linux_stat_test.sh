@@ -5,6 +5,7 @@
 # mtime() 回傳垃圾 → `$(( t - gap ))` 在 set -u 下把 "ID:" 當變數 → watch_oc 的 subshell 死、零輸出。
 # macOS 上用 coreutils 的 gstat 冒充 stat；本機 stat 已是 GNU 就直接用；兩者都沒有就 SKIP。
 set -u
+. "$(dirname "$0")/env.sh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin"

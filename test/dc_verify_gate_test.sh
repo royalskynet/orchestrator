@@ -5,6 +5,7 @@
 #   3) pass^k：DC_VERIFY_K 次全過才 PASS；第二次才失敗也要判 FAIL
 # 用真的 wo-verify（這裡測的就是它和 dc 的接線），假的只有 opencode 與 deep-lint。
 set -u
+. "$(dirname "$0")/env.sh"
 DC="$(cd "$(dirname "$0")/.." && pwd)/bin/dc"
 WV="$(cd "$(dirname "$0")/.." && pwd)/bin/wo-verify"   # repo 自帶那份，不走 PATH（PATH 上是 deepclaude 的）
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

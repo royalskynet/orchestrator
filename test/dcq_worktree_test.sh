@@ -7,6 +7,7 @@
 #   4) 同檔衝突的那張：MERGE=conflict、main 不受影響、分支保留
 #   5) cwd 髒、或 DCQ_WORKTREE=0 → 照舊直接在 cwd 跑（序列路徑）
 set -u
+. "$(dirname "$0")/env.sh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 T="$(cd "$T" && pwd -P)"   # macOS /var → /private/var，要和 git worktree list 印的一致

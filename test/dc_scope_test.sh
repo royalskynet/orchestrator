@@ -7,6 +7,7 @@
 #   3) 沒寫 writes 的工單 → 不檢查
 #   4) 跑前就髒的檔不算
 set -u
+. "$(dirname "$0")/env.sh"
 OC="$(cd "$(dirname "$0")/.." && pwd)/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"

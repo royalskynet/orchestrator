@@ -8,6 +8,7 @@
 #   4) I3a（10-23）：主 checkout 被 dcq 的 sibling merge 前進（新 commit 全是 committer=dcq）→ 不算越界；
 #      模型自己 commit（committer 不是 dcq）或動工作樹 → 仍判越界。10-22 批次 R7／R10／R11 因此誤判 FATAL
 set -u
+. "$(dirname "$0")/env.sh"
 OC="$(cd "$(dirname "$0")/.." && pwd)/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"   # 不讀真的全域閘（10-19：Jev 閘封鎖時這些測試全掛）

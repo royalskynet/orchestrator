@@ -2,6 +2,7 @@
 # dcq 的最小自檢：用假的 dc 驗佇列機制，不打上游。
 # 斷言三件：1) 平行度真的 >1  2) 同 cwd 的 job 絕不重疊  3) rc=1 會換模型、rc=2 不重試
 set -u
+. "$(dirname "$0")/env.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DCQ_HOME="$T/q"; mkdir -p "$T/bin" "$T/wa" "$T/wb"
 export DC_BIN="$T/bin" PATH="$T/bin:$PATH"

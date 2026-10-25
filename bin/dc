@@ -13,8 +13,8 @@
 #   --auto   config 的 permission.bash="ask" 在 headless 下會被自動拒絕 —— 沒有 --auto
 #           模型一跑 bash 就死（連 ls 都過不了），只能靠 write/edit 硬寫，實際上等於廢。
 #           執行人本來就要能跑 bash 與驗收，故預設開；DC_NO_AUTO=1 可關（會嚴重降能）。
-#   --pure   同一模型 4.5s vs 16s（agentpet.js 外掛佔 ~11s）
-#   --dir/-f 任務檔常在專案外，用 --dir 指定工作目錄並以 -f 附加，否則模型讀不到任務內容
+#   --pure   同一模型 4.5s vs 16s（agentpet.js 外掛佔 ~11s）；opencode v2 已移除，dc 依版本自動不帶
+#   -f       任務檔常在專案外，cd 進工作目錄（1.18.x 另帶 --dir）並以 -f 附加，否則模型讀不到任務內容
 set -u
 
 # dc 認可的免費模型。suffix 規則（*-free）自動涵蓋未來新增的免費模型；
@@ -364,7 +364,11 @@ if [ -n "$scope_w" ] && scope_head="$(git -C "$d" rev-parse HEAD 2>/dev/null)"; 
 else scope_w=""; fi
 
 # 偵測字串首字母加 []：模型 cat 本檔時，這幾行原始碼不可比中自己（10-21 改 dc 的工單誤判濫用）。
-RL_RE='small=false.*([R]ate limit exceeded|[F]reeUsageLimitError)'
+RL_RE='small=false.*[R]ate limit exceeded'
+# 額度用完另成一類（dcq 據此冷卻到重置、不記模型的帳）。opencode 對 Zen／Go 額度是直接 rc=1 結束，
+# 印 Error 前綴接 [F]ree usage limit reached…／[G]o usage limit exceeded（M2 實例各 198／151 筆；
+# 首字母加 [] 才不會被模型 cat 本檔時自比中）；Google 是 level=ERROR log。
+QUOTA_RE='(level=ERROR.*small=false|Error: ).*([F]ree usage limit reached|[F]reeUsageLimitError|[G]o usage limit exceeded|[Y]ou exceeded your current quota|[Q]uota exceeded for metric|RESOURCE_[E]XHAUSTED)'
 # 上游不可用（Model/Endpoint is unavailable、已下架）opencode 一樣在程序內重試約 67s 才 rc=1（2026-10-11 實測），提早結束讓 dcq 換模型。
 UA_RE='small=false.*([U]pstream request failed|has been [d]eprecated)'
 # opencode 開工就印「> <agent> · <model>」，在模型回應之前（上游不可用時也照印）。
@@ -377,16 +381,24 @@ pidf="$out.pid"; rcf="$out.rc"
 # 連子程序一起殺：子程序（MCP／LSP 等）還握著 stdout 的話，tee 不會結束，wait 會卡住。
 kill_oc() { local p; p=$(cat "$pidf" 2>/dev/null) || return 0; pkill -TERM -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; return 0; }
 trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf" "$pintmp"' EXIT
-{ sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" opencode run \
+# opencode v2（2026-10）拿掉 --pure／--dir、log-level 改小寫（公開 repo 692489e）；1.18.x 照舊。
+# 看 run --help 有沒有 --pure 決定（0.2s），工作目錄一律再 cd 一次，兩版都對。
+# DC_OC_V2=0／1 可跳過偵測（測試的假 opencode 不認 --help）
+case "${DC_OC_V2:-}" in 0) oc_v2=0 ;; 1) oc_v2=1 ;; *) if opencode run --help 2>&1 | grep -q -- '--pure'; then oc_v2=0; else oc_v2=1; fi ;; esac
+if [ "$oc_v2" = 0 ]; then ocflags=(--pure --log-level ERROR --dir "$d"); else ocflags=(--log-level error); fi
+{ cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" opencode run \
   "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。
 驗收區塊在派工前已被複製釘住並逐行比對：改它只會判 exit 3 篡改，不可能讓你過關。
 驗收區塊本身有誤（怎麼做都不可能通過）時，保留驗收原樣，輸出一行 DC_TASK_DEFECT: <驗收行號> <理由> 後立即結束。" \
-  --pure --print-logs --log-level ERROR --dir "$d" -f "$f" --title "dc: $(basename "$f")" "$@"
+  "${ocflags[@]}" --print-logs -f "$f" --title "dc: $(basename "$f")" "$@"
   echo $? > "$rcf"; } 2>&1 | tee "$out" &
 teepid=$!
 rl=0; started=0; ts=$(date +%s)
 while kill -0 "$teepid" 2>/dev/null; do
+  if grep -q -E "$QUOTA_RE" "$out" 2>/dev/null; then
+    rl=5; kill_oc; break
+  fi
   if grep -q -E "$RL_RE" "$out" 2>/dev/null; then
     rl=1; kill_oc; break
   fi
@@ -405,6 +417,8 @@ while kill -0 "$teepid" 2>/dev/null; do
 done
 wait "$teepid"
 rc=$(cat "$rcf" 2>/dev/null || echo 1)
+# Zen／Go 額度錯誤 opencode 自己 1 秒內就結束，輪詢迴圈常來不及看到
+[ "$rl" = 0 ] && grep -q -E "$QUOTA_RE" "$out" 2>/dev/null && rl=5
 # 比在所有其他判定之前：越界與成敗無關，PASS 的工單一樣可能寫壞別的 worktree。
 # exit 2 讓 dcq 走 FATAL 不重試——換模型重跑只會再污染一次。
 drift="$(_wt_snap | while read -r w h1 s1; do
@@ -439,6 +453,7 @@ EOF_SCOPE
   set +f
   [ -n "$scope_over" ] && echo "dc: SCOPE=over（改動超出工單 writes：${scope_w}）：${scope_over}" >&2
 fi
+[ "$rl" = 5 ] && { echo "dc: 上游額度用完（$(grep -m1 -oE "$QUOTA_RE" "$out" | grep -oE '(Free usage limit reached|FreeUsageLimitError|Go usage limit exceeded|You exceeded your current quota|Quota exceeded for metric[^"]*|RESOURCE_EXHAUSTED)' | head -1 | cut -c1-160)），已提早結束" >&2; grep -qE 'PerMinute|per minute' "$out" && echo "dc: 額度窗口＝每分鐘" >&2; exit 1; }
 [ "$rl" = 1 ] && { echo "dc: 上游限流（429），opencode 會照 retry-after 久等重試，已提早結束" >&2; exit 1; }
 [ "$rl" = 2 ] && { echo "dc: 上游不可用（$(grep -m1 -oE '(Upstream request failed[^"]*|Model [^ ]+ has been deprecated)' "$out")），已提早結束" >&2; exit 1; }
 [ "$rl" = 4 ] && { echo "dc: Zen 免費閘道判濫用（Detect Abuse Traffic），整個 Zen 免費池停用 ${ZEN_GATE_S}s（${ZEN_GATE}），已提早結束" >&2; exit 1; }

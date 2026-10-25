@@ -3,6 +3,7 @@
 # 且 skill 工具要禁用，另掛一份 dc 專用的執行人規則。實測輸入 21.6k → 7.2k token。
 # 用假的 opencode 記下它實際收到的環境變數，不打上游、不發 TG。
 set -u
+. "$(dirname "$0")/env.sh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DC="$REPO/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

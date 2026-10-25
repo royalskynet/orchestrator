@@ -2,6 +2,7 @@
 # dcq .out 遮罩：HOME 底下沒有 ~/.claude/tools（雲端 clone 情境）也要遮掉憑證（2026-10-24，Grok 雲端 .out 留原文）。
 # 假 dc 印一把假 key，跑完檢查 .out 只剩遮罩標記。不打上游。
 set -u
+. "$(dirname "$0")/env.sh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME" "$T/bin" "$T/w"

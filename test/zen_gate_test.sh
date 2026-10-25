@@ -4,6 +4,7 @@
 # 連續 3 輪「到期→探測→又被封」才開始倍增（streak≤3 不變，>3 每輪 ×2），封頂 DC_ZEN_GATE_MAX_S。
 # 閘檔、Jev 檔、JEN 計數檔全部指到暫存目錄，不碰本機真的閘。
 set -u
+. "$(dirname "$0")/env.sh"
 R="$(cd "$(dirname "$0")/.." && pwd)"
 ZG="$R/bin/zen-gate"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

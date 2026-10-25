@@ -3,6 +3,7 @@
 # dc 要在幾秒內以 rc=1 結束（dcq 才會換模型），而且不能跑驗收。正常開工的不可被誤殺。
 # 假 opencode 照真實 log 格式吐一行 ERROR 後 sleep，模擬它在程序內重試。
 set -u
+. "$(dirname "$0")/env.sh"
 DC="$(cd "$(dirname "$0")/.." && pwd)/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/w" "$T/cfg/opencode"
@@ -28,6 +29,12 @@ case "$FAKE" in
   abuse)    : > "$T/called"; echo '> build · x'; echo "$e Forbidden, OpenCode Free Model Gateway Detect Abuse Traffic\""; sleep 30 ;;
   abuse2)   echo '> build · x'; echo "Error: OpenCode's free models aren't available from your current network because we've detected abusive traffic from this IP address."; sleep 30 ;;
   freetier) echo '> build · x'; echo "$e OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.\""; sleep 30 ;;
+  # issue #8：額度錯誤原文（M2 實例，含 ANSI）。opencode 對 Zen／Go 額度是自己馬上 rc=1 結束
+  zenquota) echo '> build · x'; printf '\033[91m\033[1mError: \033[0mFree usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.\n'; exit 1 ;;
+  goquota)  echo '> build · x'; printf '\033[91m\033[1mError: \033[0mGo usage limit exceeded\n'; exit 1 ;;
+  gquota)   echo '> build · x'; echo "$e You exceeded your current quota, please check your plan and billing details. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20\""; sleep 30 ;;
+  grpm)     echo '> build · x'; echo "$e You exceeded your current quota. quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier\""; sleep 30 ;;
+  quotatalk) echo '> build · x'; echo 'log 裡寫著 Free usage limit reached 是另一回事'; echo done ;;
   ok)       : > "$T/called"; echo '> build · x'; echo done ;;
   selfcat)  echo '> build · x'; cat "$DCSRC"; echo done ;;
   hang)     sleep 30 ;;
@@ -101,4 +108,13 @@ chk "上游正常回應後清掉失敗計數"            "$([ -f "$T/zen-gate.st
 echo 0 > "$T/zen-gate"; rm -f "$T/jev-zen.json"; echo 3 > "$T/zen-gate.streak"
 try 8 '判濫用' FAKE=abuse2 >/dev/null
 chk "判濫用不清計數（反而 +1）"            "$(cat "$T/zen-gate.streak" 2>/dev/null)" "4"
+# issue #8：額度用完提早結束並印可辨識的一行（dcq 據此記 quota、冷卻到重置，不記模型的帳）
+echo 0 > "$T/zen-gate"; rm -f "$T/jev-zen.json"
+chk "Zen 額度用完判 quota"                 "$(try 8 '^dc: 上游額度用完（Free usage limit reached）' FAKE=zenquota)" 1:no:fast:key
+chk "Go 額度用完判 quota"                  "$(try 8 '^dc: 上游額度用完（Go usage limit exceeded）' FAKE=goquota)" 1:no:fast:key
+chk "Google RPD 判 quota 且提早結束"        "$(try 8 '^dc: 上游額度用完' FAKE=gquota DC_FREE_MODEL=google/x)" 1:no:fast:key
+chk "Google RPD 不標每分鐘"                "$(try 8 '額度窗口＝每分鐘' FAKE=gquota DC_FREE_MODEL=google/x)" 1:no:fast:nokey
+chk "Google RPM 標每分鐘"                  "$(try 8 '^dc: 額度窗口＝每分鐘' FAKE=grpm DC_FREE_MODEL=google/x)" 1:no:fast:key
+chk "模型輸出提到額度字樣不誤判"           "$(try 8 '上游額度用完' FAKE=quotatalk)" 0:yes:fast:nokey
+chk "額度用完不寫 Zen 濫用閘"              "$(cat "$T/zen-gate")" 0
 exit "$fail"

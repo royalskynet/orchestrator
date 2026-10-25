@@ -2,6 +2,7 @@
 # dc 的計費分級自檢：全部照派，非免費一定要發 TG 警示；免費的不准吵。
 # 用假的 opencode 記下實際被派的 -m、假的 hpush 記下警示，不打上游也不真發 TG。
 set -u
+. "$(dirname "$0")/env.sh"
 DC="$(cd "$(dirname "$0")/.." && pwd)/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"   # 不讀真的全域閘（10-19：Jev 閘封鎖時這些測試全掛）

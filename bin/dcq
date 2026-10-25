@@ -106,7 +106,7 @@ rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計�
       nm=split(order, L, " ")
       for (i=1; i<=nm; i++) {
         m=L[i]; n=0; p=0; s=0; d=0; st=cnt[m]-win+1; if (st<1) st=1
-        for (k=st; k<=cnt[m]; k++) { if (R[m,k]==2 || W[m,k]=="upstream") continue; n++; d+=D[m,k]; if (R[m,k]==0) p++; if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin") s++ }
+        for (k=st; k<=cnt[m]; k++) { if (R[m,k]==2 || W[m,k]=="upstream" || W[m,k]=="quota") continue; n++; d+=D[m,k]; if (R[m,k]==0) p++; if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin") s++ }
         N[i]=n; P[i]=p; S[i]=s; DS[i]=d; pr[i]=(n ? p/n : 0); tn+=n; tp+=p; td+=d
       }
       # 貝氏平滑（2026-10-22）：每隻先加 pk 次「全池平均」的虛擬嘗試（平均秒數 mu_d、平均通過率 mu_p），
@@ -273,12 +273,30 @@ oc_direct_ok() {
   [ -r "$ocj" ] || return 0
   jq -e --arg p "$p" '(.enabled_providers // null) as $e | ($e == null or ($e | index($p) != null)) and ((.disabled_providers // []) | index($p) == null)' "$ocj" >/dev/null 2>&1
 }
+# OmniRoute 在遠端（Tailscale 另一台）離線時，兜底整層只能等 timeout（issue #12）：組池先打一次 /models，
+# 2 秒內沒有任何 HTTP 回應（401 也算活著）就整個 provider 剔出。結果快取 OR_HC_S 秒，dcq status／plan 不必每次都等。
+# userspace Tailscale 沒有 TUN，要經 proxy：curl 吃 ALL_PROXY／HTTPS_PROXY，opencode（Bun fetch）吃 HTTP(S)_PROXY，兩邊設同一組即可。
+OR_HC_S="${DCQ_OR_HC_S:-120}"
+or_alive() {  # $1=opencode.json
+  local c="$Q/.health/@omniroute.hc" u code t
+  [ "${DCQ_OR_HC:-1}" = 0 ] && return 0
+  # 組池在 now()／mtime() 定義之前跑，這裡內聯
+  t=$(stat -c %Y "$c" 2>/dev/null || stat -f %m "$c" 2>/dev/null || echo 0)
+  if [ -f "$c" ] && [ $(( $(date +%s) - t )) -lt "$OR_HC_S" ]; then [ "$(cat "$c")" = ok ]; return; fi
+  u="$(jq -r '.provider.omniroute.options.baseURL // empty' "$1" 2>/dev/null)"; [ -n "$u" ] || return 0
+  code="$(curl -s -o /dev/null -m 2 -w '%{http_code}' "${u%/}/models" 2>/dev/null)"
+  mkdir -p "$Q/.health"; if [ "${code:-000}" != 000 ]; then echo ok > "$c"; return 0; fi
+  echo down > "$c"; return 1
+}
 oc_declared() {
-  local ocj="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" m out="" miss=""
+  local ocj="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" m out="" miss="" orhc=""
   command -v jq >/dev/null || { echo "$1"; return; }
   for m in $1; do
     case "$m" in
-      omniroute/*) if [ -r "$ocj" ] && jq -e --arg k "${m#omniroute/}" '.provider.omniroute.models[$k]' "$ocj" >/dev/null 2>&1; then out="$out $m"; else miss="$miss $m"; fi ;;
+      omniroute/*) if [ -r "$ocj" ] && jq -e --arg k "${m#omniroute/}" '.provider.omniroute.models[$k]' "$ocj" >/dev/null 2>&1; then
+           [ -n "$orhc" ] || { or_alive "$ocj" && orhc=ok || { orhc=down; echo "dcq: OmniRoute（$(jq -r '.provider.omniroute.options.baseURL' "$ocj")）2 秒內無回應，omniroute/* 這次不派" >&2; }; }
+           if [ "$orhc" = ok ]; then out="$out $m"; else miss="$miss $m"; fi
+         else miss="$miss $m"; fi ;;
       openrouter/*|nvidia/*|google/*) if oc_direct_ok "${m%%/*}" "$ocj"; then out="$out $m"; else miss="$miss $m"; fi ;;
       kilo/*) if oc_direct_ok kilo "$ocj" && jq -e --arg k "${m#kilo/}" '.provider.kilo.models[$k]' "$ocj" >/dev/null 2>&1; then out="$out $m"; else miss="$miss $m"; fi ;;
       *) out="$out $m" ;;
@@ -287,7 +305,9 @@ oc_declared() {
   [ -z "$miss" ] || echo "dcq: opencode.json 未宣告，剔出池：${miss# }" >&2
   echo "${out# }"
 }
-POOL_TAIL="$(oc_declared "$POOL_TAIL")"
+_in="$POOL_TAIL"; POOL_TAIL="$(oc_declared "$POOL_TAIL")"
+# 剔出名單留在父殼：plan 摘要、doctor、告警要用（issue #9：只印一行 stderr 常被呼叫端濾掉）
+POOL_MISS=""; for _m in $_in; do case " $POOL_TAIL " in *" $_m "*) ;; *) POOL_MISS="$POOL_MISS${POOL_MISS:+ }$_m" ;; esac; done
 # Go 免費併進主免費層（2026-10-22）：opencode-go/*-free 一樣免費（docs/go：額度用完仍可用免費模型），
 # 以前只因 dc_id 有斜線就落到兜底層，排在 0 PASS 的 Zen 累犯後面——兜底的 opencode-go/beam-free 12 跑 8 過、中位 71s，
 # 是實測最好的免費模型，卻常輪不到（10-21 wo-r1／r8／r9 撞 JOB_MAX 前都沒試到）。
@@ -402,13 +422,33 @@ bump_fail() {
     echo "dcq: 冷卻 $m —— 連續 ${ALLOW} 次上游失敗，${COOL_S}s 內不派" >&2
   fi
 }
-reset_fail() { rm -rf "$Q/.health/$(fk "$1").fails" "$Q/.health/$(fk "$1").cool" "$Q/.health/$(fk "$1").gone"; }
+reset_fail() { rm -rf "$Q/.health/$(fk "$1").fails" "$Q/.health/$(fk "$1").cool" "$Q/.health/$(fk "$1").gone"; case "$1" in */*) ;; *) rm -f "$Q/.health/@zen.cool" ;; esac; }
 # 上游不回（why=upstream）直接冷卻 UPSTREAM_COOL_S，不等 ALLOW 次：額度用完或排隊時同一隻再試只會再白等
 # STALL_S（10-07 實例 4 隻×2 輪×200s）。冷卻檔是跨工單共用的，併發中的其他工單也會跳過它。
 UPSTREAM_COOL_S="${DCQ_UPSTREAM_COOL_S:-900}"
 cool_upstream() {
   echo $(( $(now) + UPSTREAM_COOL_S )) > "$Q/.health/$(fk "$1").cool"; rm -rf "$Q/.health/$(fk "$1").fails"
   echo "dcq: 冷卻 $1 —— 上游不回，${UPSTREAM_COOL_S}s 內不派" >&2
+}
+# 到某時區下一個 00:00 還有幾秒（BSD／GNU date 都吃 TZ=）
+to_midnight() { local h m s; IFS=: read -r h m s <<<"$(TZ="$1" date +%H:%M:%S)"; echo $(( 86400 - (10#$h * 3600 + 10#$m * 60 + 10#$s) )); }
+# 額度用完（issue #8／#10／#11）：冷卻到額度重置，不是固定 15 分鐘——白試只會再撞一次。
+# Zen 免費額度按出口 IP＋UTC 日（台北 08:00 重置），一隻撞到＝整個 Zen 免費池都沒了 → provider 級冷卻 .health/@zen.cool。
+# Google AI Studio 免費層 RPD 按模型、太平洋時間午夜重置 → 該模型冷卻到那時；每分鐘窗口（RPM）只冷 QUOTA_RPM_COOL_S。
+# Go usage limit 只擋付費 Go 模型，*-free 照用（docs/go）→ 只冷該模型 QUOTA_GO_COOL_S。
+# ponytail: 冷卻狀態只在本機 $Q；多機共用同一出口 IP 時別台不知道（issue #10），要共用再把 @zen.cool 換成同步檔或 HTTP。
+QUOTA_GO_COOL_S="${DCQ_QUOTA_GO_COOL_S:-3600}"
+QUOTA_RPM_COOL_S="${DCQ_QUOTA_RPM_COOL_S:-120}"
+cool_quota() {  # $1=model $2=該次 .out
+  local m="$1" k s
+  if grep -q '^dc: 額度窗口＝每分鐘' "$2" 2>/dev/null; then k="$(fk "$m")"; s=$QUOTA_RPM_COOL_S
+  else case "$m" in
+    */*) k="$(fk "$m")"
+         case "$m" in google/*) s=$(to_midnight America/Los_Angeles) ;; opencode-go/*) s=$QUOTA_GO_COOL_S ;; *) s=$UPSTREAM_COOL_S ;; esac ;;
+    *) k=@zen; s=$(to_midnight UTC) ;;
+  esac; fi
+  echo $(( $(now) + s )) > "$Q/.health/$k.cool"; rm -rf "$Q/.health/$(fk "$m").fails"
+  echo "dcq: 冷卻 $([ "$k" = @zen ] && echo 'Zen 免費池（整個 provider）' || echo "$m") —— 額度用完，${s}s 內不派" >&2
 }
 # 報錯加掃（10-23）：go-sync 每 7 天才掃一次，下架的 opencode-go 模型會在名單裡留到下次週掃，
 # 每張工單都撞一次（10-23 02:00 r7／r13 撞 minimax-m3.1-flash-free、longcat-2.5-preview-free）。
@@ -522,7 +562,8 @@ ZEN_GATE="${DC_ZEN_GATE:-$HOME/.dcq/.zen-gate}"
 ZG="$(dirname "$(readlink -f "$0")")/zen-gate"
 cool_left() {
   local u g; u=$(cat "$Q/.health/$(fk "$1").cool" 2>/dev/null || echo 0)
-  case "$1" in */*) ;; *) g=$("$ZG" until 2>/dev/null || cat "$ZEN_GATE" 2>/dev/null || echo 0); [ "${g:-0}" -gt "$u" ] && u=$g ;; esac
+  case "$1" in */*) ;; *) g=$("$ZG" until 2>/dev/null || cat "$ZEN_GATE" 2>/dev/null || echo 0); [ "${g:-0}" -gt "$u" ] && u=$g
+    g=$(cat "$Q/.health/@zen.cool" 2>/dev/null || echo 0); [ "${g:-0}" -gt "$u" ] && u=$g ;; esac
   echo $(( u > $(now) ? u - $(now) : 0 ))
 }
 
@@ -585,8 +626,68 @@ pick_model() {
 
 # 派工前預覽（派o 先給使用者看這份再問要不要派）：每張的難度與會走的層，不入列、不打上游。
 # ponytail: 層級順序與 run_job 各寫一份；改 run_job 的階梯要同步改這裡（dcq_tier_test 5b 會抓順序不一致）。
+hm() { date -r "$1" +%H:%M 2>/dev/null || date -d "@$1" +%H:%M; }
+# 免費池體檢（issue #9／#10）：一行 provider 組成＋剔出名單＋Zen 冷卻到幾點。plan／doctor 開頭印。
+pool_summary() {
+  local m s z
+  s="$(for m in ${MODELS_MANUAL:-$MODELS}; do prov_of "$m"; done | sort | uniq -c | awk '{printf "%s%s×%s", (n++ ? " " : ""), $2, $1}')"
+  echo "免費池 provider：${s:-（空）}${POOL_MISS:+（剔出 $(set -- $POOL_MISS; echo $#) 個：${POOL_MISS}）}"
+  z=$(cool_left zen-probe); [ "$z" -gt 0 ] && echo "Zen 免費池冷卻到 $(hm $(( $(now) + z )))（額度／濫用閘），免費層跳過 Zen"
+  return 0
+}
+# 清冊有、本機沒宣告（不是刻意關掉）≥ DCQ_MISS_ALERT 隻（預設 1）、或免費主層只剩一家 provider：stderr 警告＋TG。
+# 預設 1 隻就報（M2 追加建議，issue #9）：清冊同步帶進新 provider 時，各機 opencode.json 不會跟著同步，要當場提示。
+# TG 每天一則；同一天剔出名單變了（又帶進新 provider）再推一則。
+pool_alert() {
+  local np st="$Q/.health/pool-alert.$(date +%F)" msg
+  np="$(for m in ${MODELS_MANUAL:-$MODELS}; do prov_of "$m"; done | sort -u | wc -l | tr -d ' ')"
+  local bad; bad="$(miss_split)"
+  { [ -n "$bad" ] && [ "$(set -- $bad; echo $#)" -ge "${DCQ_MISS_ALERT:-1}" ]; } || [ "$np" -le 1 ] || return 0
+  msg="⚠️ dcq 免費池縮水：$(pool_summary | head -1)。清冊有、本機 opencode.json 沒宣告的，dcq doctor --fix 印補丁"
+  echo "dcq: WARN ${msg}" >&2
+  [ "$(cat "$st" 2>/dev/null)" = "${bad:-single}" ] && return 0
+  mkdir -p "$Q/.health"; echo "${bad:-single}" > "$st"
+  { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && { hpush "$msg" >/dev/null 2>&1 & }
+  return 0
+}
+# enabled_providers／disabled_providers 明確排除的 provider＝這台刻意不用（例：M4 不開 openrouter／nvidia 直連），不算壞。
+# 設定被清空時這兩欄通常也跟著沒了，剔出的就會落到「壞」。$1=off 印刻意關掉的，否則印壞的。
+miss_split() {
+  local ocj="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" m off="" bad=""
+  for m in $POOL_MISS; do
+    if [ "$(prov_of "$m")" != omniroute ] && jq -e --arg p "$(prov_of "$m")" '((.enabled_providers // null) as $e | $e != null and ($e | index($p)) == null) or ((.disabled_providers // []) | index($p) != null)' "$ocj" >/dev/null 2>&1
+    then off="$off${off:+ }$m"; else bad="$bad${bad:+ }$m"; fi
+  done
+  if [ "${1:-}" = off ]; then echo "$off"; else echo "$bad"; fi
+}
+# doctor --fix：依剔出名單印 opencode.json 補丁（只印不寫；key 一律 {env:} 引用，不碰值）。
+# 套用：jq -s '.[0] * .[1]' opencode.json patch.json。OmniRoute 的 baseURL 每台不同，沒有就留佔位字串。
+oc_patch() {
+  local m p k v; for m in $1; do
+    p="$(prov_of "$m")"; k="${m#*/}"
+    case "$p" in
+      kilo) jq -n --arg k "$k" '{provider:{kilo:{npm:"@ai-sdk/openai-compatible",name:"Kilo Gateway",options:{baseURL:"https://api.kilo.ai/api/gateway/v1"},models:{($k):{}}}}}' ;;
+      omniroute) jq -n --arg k "$k" '{provider:{omniroute:{npm:"@ai-sdk/openai-compatible",name:"OmniRoute",options:{baseURL:"http://<OmniRoute 主機>:20128/v1",apiKey:"{env:OMNIROUTE_API_KEY}"},models:{($k):{}}}}}' ;;
+      google|openrouter|nvidia)
+        case "$p" in google) v=GEMINI_API_KEY ;; openrouter) v=OPENROUTER_API_KEY ;; *) v=NVIDIA_API_KEY ;; esac
+        jq -n --arg p "$p" --arg v "{env:$v}" '{provider:{($p):{options:{apiKey:$v}}}}' ;;
+    esac
+  done | jq -s 'reduce .[] as $x ({}; . * $x)'
+}
+cmd_doctor() {
+  local off bad ocj="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+  pool_summary; off="$(miss_split off)"; bad="$(miss_split)"
+  [ -z "$off" ] || echo "略過 enabled／disabled_providers 刻意關掉的：$off"
+  if [ -n "$bad" ] && [ "${1:-}" = --fix ]; then
+    echo "補丁（併入 ${ocj}：jq -s '.[0] * .[1]' 原檔 補丁；已宣告但連不到的 omniroute 照樣列出，先查連線）："
+    oc_patch "$bad"
+  fi
+  [ -z "$bad" ] || { echo "FAIL 清冊有、但本機 opencode.json 沒宣告／沒 key／連不到：$bad"; return 1; }
+  echo "OK 清冊的模型都在池裡"
+}
 cmd_plan() {
   local order="${DCQ_ORDER:-default}" task tier ocbin="${DC_BIN:-$(dirname "$(readlink -f "$0")")}" n=0
+  pool_summary; pool_alert
   case "$order" in default|free|sub) ;; *) die "DCQ_ORDER 只能是 default／free／sub：$order" ;; esac
   [ $# -gt 0 ] || die "用法：dcq plan <task.md>...（DCQ_ORDER=free|sub 換順序；預設 default）"
   for task in "$@"; do
@@ -616,6 +717,7 @@ cmd_add() {
   [ -f "$task" ] || die "task 檔不存在：$task"
   [ -d "$cwd" ] || die "cwd 不存在：$cwd"
   cwd="$(cd "$cwd" && pwd)"
+  pool_alert
 
   # 准入閘：沒有可跑的驗收區塊的工單不該佔 slot。用 dc 自己的閘，不另寫一套。
   # 跟 dc 同一份 repo 自帶閘（bin/ 同目錄），不走 PATH 上 deepclaude 的那份
@@ -754,6 +856,12 @@ watch_oc() {
   done
   wait "$pid" 2>/dev/null; rc=$?
   rm -f "$Q/running/$id.pid"
+  # dc 提早結束的上游錯誤不是模型的錯（issue #8：10-24 起 ~240 筆額度錯誤記成 rc=1，Zen 免費全掉冷宮）。
+  # quota＝額度用完，冷卻到重置；upstream＝限流／不可用／濫用閘，照舊短冷卻。兩者 rank_free 都不算樣本。
+  if [ "$why" = exit ] && [ "$rc" = 1 ]; then
+    if grep -q '^dc: 上游額度用完' "$out" 2>/dev/null; then why=quota
+    elif grep -qE '^dc: (上游限流|上游不可用|Zen 免費閘道判濫用)' "$out" 2>/dev/null; then why=upstream; fi
+  fi
   # 每次都記最大靜默間隔（STALL_S 的唯一校準依據）與這次嘗試的總秒數（自動重排的時間成本）
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F_%T)" "$model" "$maxgap" "$rc" "$why" "$(( $(now) - ta ))" "${JOB_TIER:-}" >> "$Q/logs/gaps.tsv"
   # 模型標了工單瑕疵卻沒自己收手（多半又卡回去硬做），被 watchdog 殺掉：認那行走
@@ -893,6 +1001,8 @@ run_job() {
          rc=124; break ;;
       upstream:*) rc=124; cool_upstream "$model"
          echo "dcq[$id] $model upstream，換下一個模型" >&2 ;;
+      quota:*) rc=124; cool_quota "$model" "$Q/logs/$id.$(fk "$model").out"
+         echo "dcq[$id] $model 額度用完，換下一個模型" >&2 ;;
       stall:*|slow:*|spin:*) rc=124; bump_fail "$model"; noretry="$noretry $model"
          echo "dcq[$id] $model ${why}，冷卻計數＋1，換下一個模型" >&2 ;;
       exit:2) echo "dcq[$id] FATAL rc=2（工單契約錯，不重試）" >&2
@@ -1243,6 +1353,7 @@ case "${1:-}" in
   start)  shift; [ "${1:-}" = "-j" ] && { JOBS="$2"; shift 2; }; cmd_start ;;
   plan)   shift; cmd_plan "$@" ;;
   status) cmd_status ;;
+  doctor) shift; cmd_doctor "$@" ;;
   rank)   shift; rank_free "${MODELS_MANUAL:-$MODELS}" table "${1:-}"; echo "名單同步：${SYNC_NOTE:-無變動}"; echo "兜底層：$POOL_TAIL"; echo "訂閱層：$POOL_PAID"; echo "API 層：${POOL_API:-（關，DCQ_ALLOW_API=1 才開）}"; echo "hard 不派：${EASY_ONLY:-無}"; echo "mid 不派：${EASY_STRICT:-無}"; echo "provider 上限：${PROV_MAX:-無}" ;;
   rescan) RESYNC_MIN_S=0 zen_resync "每日清單掃" ;;
   sync-catalog) shift; SYNC_ADD_ZEN="$SYNC_ADD_ZEN" SYNC_ADD_SUB="$SYNC_ADD_SUB" SYNC_ADD_GOFREE="$SYNC_ADD_GOFREE" SYNC_RM="$SYNC_RM" \
@@ -1259,6 +1370,7 @@ case "${1:-}" in
   dcq status                         各狀態計數與失敗清單
   dcq plan <task.md>...              派工前預覽每張的難度與會走的層（不入列）
   dcq rescan                         抓 Zen 上游 /models 清單（零 token），上下架回灌名單與清冊
+  dcq doctor [--fix]                 免費池健檢：各 provider 數、被剔出的模型（壞＝exit 1，刻意關閉＝略過）；--fix 印 opencode.json 補丁
   dcq rank [easy|mid|hard]           免費層排名統計（給難度＝只算該難度＋舊紀錄）
   dcq cancel <job-id>                取消一張工單（殺掉整棵程序樹，階梯不重試，移到 failed）
   dcq wait [id...] [--timeout S]     睡到這些工單結案（不給 id＝等佇列清空）；rc 0 全過／1 有失敗／124 逾時

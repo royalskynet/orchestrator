@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # catalog-sync 回寫清冊＋dc 預設模型跟清冊走的自檢。只動暫存目錄，不碰真清冊、不打上游。
 set -u
+. "$(dirname "$0")/env.sh"
 R="$(cd "$(dirname "$0")/.." && pwd)"
 CS="$R/bin/catalog-sync" DC="$R/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
