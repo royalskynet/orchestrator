@@ -57,6 +57,8 @@ tier() {
     # 那個 Google 專案若開了 billing，google/* 就會按量計費，這行要改回 metered。
     kilo/*:free|google/gemini-*flash*) echo free ;;
     opencode/*|opencode-go/*) if is_free "${1#*/}"; then echo free; elif [ "${1%%/*}" = opencode-go ]; then echo sub; else echo metered; fi ;;
+    # Claude 訂閱（claude.ai 方案額度，bin/claude-exec 走 OAuth，不碰 API key）
+    claude/*) echo sub ;;
     */*) echo metered ;;
     *) if is_free "$1"; then echo free; else echo metered; fi ;;
   esac
@@ -263,6 +265,8 @@ fi ;; esac
 # 上游停滯時 opencode 預設乾等 chunkTimeout（官方 300000ms）。沒設或設太長＝一次停滯
 # 燒 5 分鐘還看不出是卡死還是在想，故派工前先唸一次合併後的 config 並出聲。
 # 只 WARN 不擋：這是使用者的 config，dc 無權改。
+# claude/* 不經 opencode（bin/claude-exec），沒有 chunkTimeout 可設
+case "$m" in claude/*) DC_NO_TIMEOUT_WARN=1 ;; esac
 if [ "${DC_NO_TIMEOUT_WARN:-0}" != 1 ] && command -v jq >/dev/null; then
   case "$m" in */*) prov="${m%%/*}" ;; *) prov="opencode" ;; esac
   ct="$(opencode debug config 2>/dev/null | jq -r --arg p "$prov" '.provider[$p].options.chunkTimeout // empty' 2>/dev/null)"
@@ -374,7 +378,8 @@ RL_RE='small=false.*[R]ate limit exceeded'
 # 額度用完另成一類（dcq 據此冷卻到重置、不記模型的帳）。opencode 對 Zen／Go 額度是直接 rc=1 結束，
 # 印 Error 前綴接 [F]ree usage limit reached…／[G]o usage limit exceeded（M2 實例各 198／151 筆；
 # 首字母加 [] 才不會被模型 cat 本檔時自比中）；Google 是 level=ERROR log。
-QUOTA_RE='(level=ERROR.*small=false|Error: ).*([F]ree usage limit reached|[F]reeUsageLimitError|[G]o usage limit exceeded|[Y]ou exceeded your current quota|[Q]uota exceeded for metric|RESOURCE_[E]XHAUSTED)'
+# Claude 訂閱（claude-exec 把 result 錯誤印成 `Error: claude-exec: …`）：[C]laude AI usage limit reached／[Y]ou've hit your … limit。
+QUOTA_RE='(level=ERROR.*small=false|Error: ).*([F]ree usage limit reached|[F]reeUsageLimitError|[G]o usage limit exceeded|[Y]ou exceeded your current quota|[Q]uota exceeded for metric|RESOURCE_[E]XHAUSTED|[C]laude AI usage limit reached|[Y]ou.ve hit your [a-z ]*limit)'
 # 上游不可用（Model/Endpoint is unavailable、已下架）opencode 一樣在程序內重試約 67s 才 rc=1（2026-10-11 實測），提早結束讓 dcq 換模型。
 # opencode 型錄沒有這隻（清冊從 Zen /models 自動加、models.dev 還沒收，10-25 jev-1.13-free 兩台 37 筆）：
 # v2 印「Error: [M]odel unavailable: <id>」、1.18.x 是 [P]roviderModelNotFoundError，同屬上游不可用，不算模型的帳。
@@ -397,7 +402,9 @@ case "${DC_OC_V2:-}" in 0) oc_v2=0 ;; 1) oc_v2=1 ;; *) if opencode run --help 2>
 # 每張都 60s 判不開工，--standalone 同單 10s 過），--print-logs 也只有 --standalone 才帶服務端 ERROR log（額度／限流偵測靠它）。
 # OPENCODE_CONFIG_CONTENT 在 v2.1.2 --standalone 仍生效（10-25 M2 實測 instructions 有讀到）。
 if [ "$oc_v2" = 0 ]; then ocflags=(--pure --log-level ERROR --dir "$d"); else ocflags=(--standalone --log-level error); fi
-{ cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" opencode run \
+# claude/* 改叫同目錄的 claude-exec（吃同一組參數，opencode 專屬旗標忽略）
+case "$m" in claude/*) ocrun=("$(dirname "$(readlink -f "$0")")/claude-exec") ;; *) ocrun=(opencode run) ;; esac
+{ cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" "${ocrun[@]}" \
   "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。
 驗收區塊在派工前已被複製釘住並逐行比對：改它只會判 exit 3 篡改，不可能讓你過關。
@@ -464,7 +471,7 @@ EOF_SCOPE
   set +f
   [ -n "$scope_over" ] && echo "dc: SCOPE=over（改動超出工單 writes：${scope_w}）：${scope_over}" >&2
 fi
-[ "$rl" = 5 ] && { echo "dc: 上游額度用完（$(grep -m1 -oE "$QUOTA_RE" "$out" | grep -oE '(Free usage limit reached|FreeUsageLimitError|Go usage limit exceeded|You exceeded your current quota|Quota exceeded for metric[^"]*|RESOURCE_EXHAUSTED)' | head -1 | cut -c1-160)），已提早結束" >&2; grep -qE 'PerMinute|per minute' "$out" && echo "dc: 額度窗口＝每分鐘" >&2; exit 1; }
+[ "$rl" = 5 ] && { echo "dc: 上游額度用完（$(grep -m1 -oE "$QUOTA_RE" "$out" | grep -oE '(Free usage limit reached|FreeUsageLimitError|Go usage limit exceeded|You exceeded your current quota|Quota exceeded for metric[^"]*|RESOURCE_EXHAUSTED|Claude AI usage limit reached|You.ve hit your [a-z ]*limit)' | head -1 | cut -c1-160)），已提早結束" >&2; grep -qE 'PerMinute|per minute' "$out" && echo "dc: 額度窗口＝每分鐘" >&2; exit 1; }
 [ "$rl" = 1 ] && { echo "dc: 上游限流（429），opencode 會照 retry-after 久等重試，已提早結束" >&2; exit 1; }
 [ "$rl" = 2 ] && { echo "dc: 上游不可用（$(grep -m1 -oE '(Upstream request failed[^"]*|Model [^ ]+ has been deprecated|[M]odel unavailable: [^ ]+|[P]roviderModelNotFoundError: [^.]+)' "$out")），已提早結束" >&2; exit 1; }
 [ "$rl" = 4 ] && { echo "dc: Zen 免費閘道判濫用（Detect Abuse Traffic），整個 Zen 免費池停用 ${ZEN_GATE_S}s（${ZEN_GATE}），已提早結束" >&2; exit 1; }

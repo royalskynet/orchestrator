@@ -78,7 +78,7 @@ ck "doctor 列出剔出的 kilo/*" 'grep -q "FAIL.*kilo/" "$T/doc"'
 dcq doctor --fix > "$T/fix" 2>"$T/fix.err"
 ck "doctor --fix 印 kilo 補丁（含剔出的模型、baseURL）" 'sed -n "/^{/,\$p" "$T/fix" | sed "/^FAIL/d" | jq -e ".provider.kilo.models | length > 0" >/dev/null && grep -q "api.kilo.ai" "$T/fix"'
 # 無 OmniRoute 機器照補丁就能直連：nvidia 要 baseURL＋models，groq 要 models（oc_declared 要求 models 有列）
-ck "doctor --fix 印 nvidia 完整區塊" 'sed -n "/^{/,\$p" "$T/fix" | sed "/^FAIL/d" | jq -e ".provider.nvidia.options.baseURL and (.provider.nvidia.models | length > 0)" >/dev/null'
+ck "doctor --fix 印 nvidia 完整區塊" 'sed -n "/^{/,\$p" "$T/fix" | sed "/^FAIL/d" | jq -e ".provider.nvidia.options.baseURL and .provider.nvidia.options.chunkTimeout == 120000 and (.provider.nvidia.models | length > 0)" >/dev/null'
 ck "doctor --fix 印 groq models 宣告" 'sed -n "/^{/,\$p" "$T/fix" | sed "/^FAIL/d" | jq -e ".provider.groq.models | length > 0" >/dev/null'
 ck "doctor --fix 的 key 只用 {env:} 引用" '! grep -q "\"apiKey\": \"[^{]" "$T/fix"'
 printf '# p\n' > "$T/p.md"

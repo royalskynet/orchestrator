@@ -212,7 +212,13 @@ fi
 # deepseek-v4-flash 已移除：上游退役只剩轉址（hermes-agent#131254），長 session 必 400（opencode#48093）。
 # ponytail: 單一簡單工單、每隻 1 樣本，只分得出快慢和明顯壞的；真實工單累積後再依通過率重排。
 # 額度用完的模型會連敗進冷卻，自動跳下一隻，所以排序不必顧額度。
-POOL_PAID="${DCQ_POOL_PAID-$(cat_pool sub slash)}"
+# Claude 層（2026-10-25）：清冊 sub 列裡 dc_id 為 claude/* 的（bin/claude-exec 走 claude -p，Claude 訂閱額度、與主 session 共用）。
+# 只在 ORDER=sub（派os）時用，墊在冷宮之後、API 之前；default（派o）與 free（派of）都不派。不進 POOL_PAID：
+# go-sync 會把 upstream 沒有的移出訂閱層，且 default 順序也會用到訂閱層。PATH 上沒有 claude 就清空。
+_sub="$(cat_pool sub slash)"; POOL_CLAUDE=""; _ps=""
+for _m in $_sub; do case "$_m" in claude/*) POOL_CLAUDE="$POOL_CLAUDE${POOL_CLAUDE:+ }$_m" ;; *) _ps="$_ps${_ps:+ }$_m" ;; esac; done
+POOL_CLAUDE="${DCQ_POOL_CLAUDE-$POOL_CLAUDE}"; command -v claude >/dev/null || POOL_CLAUDE=""
+POOL_PAID="${DCQ_POOL_PAID-$_ps}"
 # 訂閱層名單同步：讀 oc-probe/bin/go-sync 每 7 天寫一次的 state（≤8 天才採用；2026-10-21 起週掃，原為每日 ≤48h）。upstream 沒有的移出；
 # first_seen 不是 base（＝同步上線後才出現）的非 -free 新模型接到尾巴。上線前就有、刻意沒收的不會被加回。
 GO_STATE="${DCQ_GO_STATE:-$HOME/.dcq/logs/go-models.json}"
@@ -669,7 +675,7 @@ oc_patch() {
     case "$p" in
       kilo) jq -n --arg k "$k" '{provider:{kilo:{npm:"@ai-sdk/openai-compatible",name:"Kilo Gateway",options:{baseURL:"https://api.kilo.ai/api/gateway/v1"},models:{($k):{}}}}}' ;;
       omniroute) jq -n --arg k "$k" '{provider:{omniroute:{npm:"@ai-sdk/openai-compatible",name:"OmniRoute",options:{baseURL:"http://<OmniRoute 主機>:20128/v1",apiKey:"{env:OMNIROUTE_API_KEY}"},models:{($k):{}}}}}' ;;
-      nvidia) jq -n --arg k "$k" '{provider:{nvidia:{npm:"@ai-sdk/openai-compatible",name:"NVIDIA NIM",options:{baseURL:"https://integrate.api.nvidia.com/v1",apiKey:"{env:NVIDIA_API_KEY}"},models:{($k):{}}}}}' ;;
+      nvidia) jq -n --arg k "$k" '{provider:{nvidia:{npm:"@ai-sdk/openai-compatible",name:"NVIDIA NIM",options:{baseURL:"https://integrate.api.nvidia.com/v1",apiKey:"{env:NVIDIA_API_KEY}",chunkTimeout:120000},models:{($k):{}}}}}' ;;
       # openrouter／groq 是 opencode 內建 provider，只缺 key 與 models 宣告（oc_declared 要求 models 有列）
       openrouter|groq)
         case "$p" in openrouter) v=OPENROUTER_API_KEY ;; *) v=GROQ_API_KEY ;; esac
@@ -698,16 +704,19 @@ cmd_plan() {
     n=$((n + 1)); tier="${DCQ_TIER:-}"
     [ -n "$tier" ] || { [ "${DCQ_TRIAGE:-0}" = 1 ] && [ -x "$ocbin/triage" ] && tier="$("$ocbin/triage" "$task")"; }; tier="${tier:-mid}"
     JOB_TIER="$tier"
-    local f p pe t z s a
+    local f p pe t z s a c
     case "$tier" in easy) f="$MODELS_easy" pe="$PEN_easy" z="$ZERO_easy" ;; hard) f="$MODELS_hard" pe="$PEN_hard" z="$ZERO_hard" ;; *) f="$MODELS_mid" pe="$PEN_mid" z="$ZERO_mid" ;; esac
-    f="$(fit_pool "$f")"; pe="$(fit_pool "$pe")"; z="$(fit_pool "$z")"; t="$(fit_pool "$POOL_TAIL")"; s="$(fit_pool "$POOL_PAID")"; a="$(fit_pool "$POOL_API")"
+    f="$(fit_pool "$f")"; pe="$(fit_pool "$pe")"; z="$(fit_pool "$z")"; t="$(fit_pool "$POOL_TAIL")"; s="$(fit_pool "$POOL_PAID")"; a="$(fit_pool "$POOL_API")"; c=""
     [ "$order" = free ] && { s=""; a=""; }
+    [ "$order" = sub ] && c="$(fit_pool "$POOL_CLAUDE")"
     echo "[$n] $(basename "$task")　難度 $tier"
     if [ "$order" = sub ] && [ -n "$s" ]; then echo "  1 訂閱：$s"; echo "  2 免費：$f"; else echo "  1 免費：$f"; fi
+    [ "$tier" = hard ] && [ "$BON_N" -ge 2 ] && echo "  · 強模型全冷卻時：best-of-N 同派 ≤${BON_N} 隻 fit=easy（$(not_in "$EASY_STRICT" "$EASY_ONLY")）"
     [ -z "$pe" ] || echo "  · 懲罰：$pe"
     [ -z "$t" ] || echo "  · 兜底：$t"
     [ -z "$z" ] || echo "  · 冷宮（0 PASS）：$z"
     [ "$order" = sub ] || [ -z "$s" ] || echo "  · 訂閱（付費）：$s"
+    [ -z "$c" ] || echo "  · Claude（訂閱額度）：$c"
     [ -z "$a" ] || echo "  · API（按量扣錢）：$a"
   done
   echo "順序 ${order}；併發 全域 ${JOBS}、每模型 ${MODEL_MAX}、provider ${PROV_MAX:-不限}"
@@ -879,9 +888,101 @@ watch_oc() {
   echo "$rc $why"
 }
 
+# --- best-of-N（2026-10-25，/wheel 卡「弱模型降級改 best-of-N＋既有驗收」，Large Language Monkeys arXiv 2407.21787）---
+# hard 工單在主免費層、強模型全冷卻（pick=COOL）時：不乾等、不先升付費，改同派 BON_N 隻 fit=easy 的免費模型，
+# 各在自己的 git worktree（detached，從 cwd 的 HEAD 開）跑完整 dc（自己的前置檢查、K 次驗收），
+# 第一隻 PASS 的改動套回 cwd、用本張的 pin 再驗一次才算過；其餘殺掉。全敗就照原階梯往下。
+# 只在 cwd 是 git repo 根目錄、且乾淨（或是 dcq 自己的 worktree，可以 reset）時跑；每張工單只跑一次。
+# ponytail: 候選同時佔 BON_N 個 dc 程序，不算進全域 JOBS（只受 per-model／per-provider 槽限）；
+# 套回用 git apply，cwd 在候選跑的期間不會動（本 worker 持鎖），衝突＝本機錯，當全敗處理。
+BON_N="${DCQ_BON_N:-3}"
+bon_pick() {  # $1=本單試過的；印「model slot [pslot]」每行一隻，最多 BON_N 隻
+  local m n=0 slot
+  for m in $MODELS_hard; do
+    case " $EASY_ONLY " in *" $m "*) ;; *) continue ;; esac
+    case " $EASY_STRICT $1 " in *" $m "*) continue ;; esac
+    [ "$(cool_left "$m")" = 0 ] && [ ! -e "$Q/.health/$(fk "$m").gone" ] || continue
+    slot=$(take_slot "$m") || continue
+    echo "$m $slot"; n=$((n + 1)); [ "$n" -ge "$BON_N" ] && break
+  done
+}
+bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出模型、回 0
+  local id="$1" task="$2" cwd="$3" t0="$4" picks k=0 m slot ps wt tc res win="" alive line
+  local -a ms=() wts=() sls=() bps=()
+  [ "$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$cwd" && pwd -P)" ] || return 1
+  git -C "$cwd" rev-parse --verify -q HEAD >/dev/null 2>&1 || return 1
+  if [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]; then
+    # 前面嘗試留下的半套：只有 dcq 自己的 worktree 可以清，使用者的 checkout 不碰
+    [ "$(sed -n 's/^WT=//p' "$6")" = "$cwd" ] || { echo "dcq[$id] best-of-N 跳過：cwd 有未 commit 的改動" >&2; return 1; }
+    git -C "$cwd" reset -q --hard && git -C "$cwd" clean -qfd || return 1
+  fi
+  picks="$(bon_pick "$5")"
+  [ "$(printf '%s\n' "$picks" | grep -c .)" -ge 2 ] || {
+    printf '%s\n' "$picks" | while read -r m slot ps; do [ -n "$m" ] && rmdir "$slot" ${ps:+"$ps"} 2>/dev/null; done
+    echo "dcq[$id] best-of-N 跳過：沒冷卻的 fit=easy 候選不足 2 隻" >&2; return 1; }
+  mkdir -p "$Q/.bon"
+  while read -r m slot ps; do
+    k=$((k + 1)); wt="$Q/.bon/$id.$k"; tc="$Q/.bon/$id.$k.task.md"
+    git -C "$cwd" worktree add -q --detach "$wt" HEAD >/dev/null 2>&1 || { rmdir "$slot" ${ps:+"$ps"} 2>/dev/null; continue; }
+    wt="$(cd "$wt" && pwd -P)"
+    sed "s#$(re_esc "$cwd")#$(rp_esc "$wt")#g" "$task" > "$tc"
+    ( DC_PREFLIGHT_DIR="$Q/.preflight/$id.bon$k" watch_oc "$id.bon$k" "$m" "$tc" "$wt" "$t0" 0 > "$wt.res" ) < /dev/null &
+    ms+=("$m"); wts+=("$wt"); sls+=("$slot ${ps:-}"); bps+=($!)
+  done <<<"$picks"
+  [ "${#ms[@]}" -gt 0 ] || { echo "dcq[$id] best-of-N 跳過：git worktree add 失敗" >&2; return 1; }
+  echo "dcq[$id] best-of-N：強模型全冷卻，同派 ${#ms[@]} 隻：${ms[*]}" >&2
+  while :; do
+    alive=0
+    for k in "${!ms[@]}"; do
+      res="$(cat "${wts[$k]}.res" 2>/dev/null)"
+      [ -z "$res" ] && { kill -0 "${bps[$k]}" 2>/dev/null && alive=1; continue; }
+      [ "$res" = "0 exit" ] && { win=$k; break 2; }
+    done
+    [ -e "$Q/.cancel/$id" ] && break
+    [ "$alive" = 1 ] || break
+    sleep 2
+  done
+  for k in "${!ms[@]}"; do
+    [ "$k" = "$win" ] && continue
+    [ -s "$Q/running/$id.bon$((k + 1)).pid" ] && killtree "$(cat "$Q/running/$id.bon$((k + 1)).pid")"
+    kill "${bps[$k]}" 2>/dev/null
+  done
+  wait "${bps[@]}" 2>/dev/null
+  # 被殺的 watch_oc 來不及刪自己的 pid 檔；留著的話 claim_one 看 running/ 非空，永遠不收工
+  for k in "${!ms[@]}"; do rm -f "$Q/running/$id.bon$((k + 1)).pid"; done
+  # 自己跑完的落選者照一般規則記帳；被殺的不算模型的錯
+  for k in "${!ms[@]}"; do
+    [ "$k" = "$win" ] && continue
+    case "$(cat "${wts[$k]}.res" 2>/dev/null)" in
+      *" upstream") cool_upstream "${ms[$k]}" ;;
+      *" quota") cool_quota "${ms[$k]}" "$Q/logs/$id.bon$((k + 1)).$(fk "${ms[$k]}").out" ;;
+      *" stall"|*" slow"|*" spin"|1" exit") bump_fail "${ms[$k]}" ;;
+    esac
+  done
+  local ok=1
+  if [ -n "$win" ]; then
+    wt="${wts[$win]}"
+    git -C "$wt" add -A >/dev/null 2>&1
+    if git -C "$wt" diff --cached --binary HEAD | git -C "$cwd" apply --binary - 2>/dev/null \
+       && jobmax_verify "$task" "$cwd" "$DC_PREFLIGHT_DIR"; then
+      ok=0; reset_fail "${ms[$win]}"; echo "BON=${ms[$win]}" >> "$6"; echo "${ms[$win]}"
+    else
+      echo "dcq[$id] best-of-N：${ms[$win]} 在 worktree 過了，套回 cwd 後驗收不過，當全敗" >&2
+      git -C "$cwd" reset -q --hard; git -C "$cwd" clean -qfd
+    fi
+  fi
+  for k in "${!ms[@]}"; do
+    git -C "$cwd" worktree remove --force "${wts[$k]}" >/dev/null 2>&1 || rm -rf "${wts[$k]}"
+    rm -rf "${wts[$k]}.res" "$Q/.bon/$id.$((k + 1)).task.md" "$Q/.preflight/$id.bon$((k + 1))"
+    rmdir ${sls[$k]} 2>/dev/null
+  done
+  git -C "$cwd" worktree prune >/dev/null 2>&1
+  return "$ok"
+}
+
 run_job() {
   local jobfile="$1" id task cwd rc=0 why model slot tried="" n=0 t0 pick sig prevsig prevmodel
-  local pool paid=0 pen=0 tail=0 zero=0 sub=0 api=0 round=1 left vr=0 pslot pen_pool tail_pool zero_pool paid_pool api_pool noretry="" ran=0
+  local pool paid=0 pen=0 tail=0 zero=0 sub=0 cl=0 api=0 round=1 left vr=0 pslot pen_pool tail_pool zero_pool paid_pool cl_pool api_pool noretry="" bon=0 bm ran=0
   id="$(basename "$jobfile" .job)"
   task="$(sed -n 's/^TASK=//p' "$jobfile")"
   cwd="$(sed -n 's/^CWD=//p' "$jobfile")"
@@ -906,13 +1007,14 @@ run_job() {
   case "$JOB_TIER" in easy) pool="$MODELS_easy" pen_pool="$PEN_easy" zero_pool="$ZERO_easy" ;; hard) pool="$MODELS_hard" pen_pool="$PEN_hard" zero_pool="$ZERO_hard" ;;
     *) JOB_TIER=mid pool="$MODELS_mid" pen_pool="$PEN_mid" zero_pool="$ZERO_mid" ;; esac
   pool="$(fit_pool "$pool")"; pen_pool="$(fit_pool "$pen_pool")"; zero_pool="$(fit_pool "$zero_pool")"
-  tail_pool="$(fit_pool "$POOL_TAIL")"; paid_pool="$(fit_pool "$POOL_PAID")"; api_pool="$(fit_pool "$POOL_API")"
-  # ORDER：default＝免費→懲罰→兜底→訂閱→API；free＝只用免費的層；sub＝訂閱先，用盡才回免費的層，API 墊底
+  tail_pool="$(fit_pool "$POOL_TAIL")"; paid_pool="$(fit_pool "$POOL_PAID")"; api_pool="$(fit_pool "$POOL_API")"; cl_pool=""
+  # ORDER：default＝免費→懲罰→兜底→訂閱→API；free＝只用免費的層；sub＝訂閱先，用盡才回免費的層，再 Claude 層，API 墊底
   local order free_main=""
   order="$(sed -n 's/^ORDER=//p' "$jobfile")"
   case "$order" in
     free|"") paid_pool="" api_pool="" ;;
-    sub) [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1; echo 'PAID=1' >> "$jobfile"; } ;;
+    sub) cl_pool="$(fit_pool "$POOL_CLAUDE")"
+      [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1; echo 'PAID=1' >> "$jobfile"; } ;;
   esac
   t0=$(now)
 
@@ -938,6 +1040,16 @@ run_job() {
           round=$((round + 1)); tried="$noretry"
           echo "dcq[$id] 免費層第 ${round} 輪重試" >&2; continue
         fi
+        # hard 單、主免費層強模型全冷卻 → best-of-N 同派便宜模型（每張一次），全敗才照下面的階梯
+        if [ "$bon" = 0 ] && [ "$paid" = 0 ] && [ "$JOB_TIER" = hard ] && [ "${pick%% *}" = COOL ] && [ "$BON_N" -ge 2 ]; then
+          bon=1
+          if bm="$(bon_run "$id" "$task" "$cwd" "$t0" "$tried" "$jobfile")"; then
+            mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR"
+            echo "dcq[$id] PASS（best-of-N）model=$bm" >&2; return 0
+          fi
+          [ -e "$Q/.cancel/$id" ] && { rc=130; break; }
+          echo "dcq[$id] best-of-N 沒有交件，照原階梯" >&2; continue
+        fi
         # 免費輪次用完，或免費模型全在冷卻 → 先把免費的層用完：懲罰層（免費累犯）→ 兜底層，
         # 訂閱層（opencode-go，2026-10-07 起付費）墊底（2026-10-13 使用者定）。paid＝已離開主免費層。
         if [ -n "$free_main" ]; then
@@ -959,6 +1071,10 @@ run_job() {
         if [ "$sub" = 0 ] && [ -n "$paid_pool" ]; then
           sub=1; paid=1; pool="$paid_pool"; tried=""; echo 'PAID=1' >> "$jobfile"
           echo "dcq[$id] 免費的層全用盡（${pick%% *}），fallback 訂閱層（付費）：${paid_pool}" >&2; continue
+        fi
+        if [ "$cl" = 0 ] && [ -n "$cl_pool" ]; then
+          cl=1; paid=1; pool="$cl_pool"; tried=""; grep -q '^PAID=1' "$jobfile" || echo 'PAID=1' >> "$jobfile"
+          echo "dcq[$id] 訂閱與免費的層全用盡（${pick%% *}），fallback Claude 層（訂閱額度）：${cl_pool}" >&2; continue
         fi
         if [ "$api" = 0 ] && [ -n "$api_pool" ]; then
           api=1; paid=1; pool="$api_pool"; tried=""; echo 'PAID=1' >> "$jobfile"
@@ -1107,6 +1223,13 @@ wt_gc() {
     if [ -n "$main" ] && [ -d "$main/.git" ]; then wt_drop "$main" "$d" "$id"; else rm -rf "$d"; fi
   done
   for t in "$Q"/.wt/*.task.md; do [ -e "$t" ] && [ ! -d "${t%.task.md}" ] && rm -f "$t"; done
+  # best-of-N 候選（.bon/<id>.<k>）：本張已不在 running 就收掉
+  for d in "$Q"/.bon/*/; do
+    [ -d "$d" ] || continue; d="${d%/}"; id="$(basename "$d")"; id="${id%.*}"
+    [ -e "$Q/running/$id.job" ] && continue
+    git -C "$d" worktree remove --force "$d" >/dev/null 2>&1 || rm -rf "$d"
+    rm -f "$d.res" "$d.task.md"
+  done
   return 0
 }
 # run_job 結束後：PASS → worktree 內 commit → 拿主 checkout 的 cwdlock → merge；衝突 abort、留分支。
@@ -1359,7 +1482,7 @@ case "${1:-}" in
   plan)   shift; cmd_plan "$@" ;;
   status) cmd_status ;;
   doctor) shift; cmd_doctor "$@" ;;
-  rank)   shift; rank_free "${MODELS_MANUAL:-$MODELS}" table "${1:-}"; echo "名單同步：${SYNC_NOTE:-無變動}"; echo "兜底層：$POOL_TAIL"; echo "訂閱層：$POOL_PAID"; echo "API 層：${POOL_API:-（關，DCQ_ALLOW_API=1 才開）}"; echo "hard 不派：${EASY_ONLY:-無}"; echo "mid 不派：${EASY_STRICT:-無}"; echo "provider 上限：${PROV_MAX:-無}" ;;
+  rank)   shift; rank_free "${MODELS_MANUAL:-$MODELS}" table "${1:-}"; echo "名單同步：${SYNC_NOTE:-無變動}"; echo "兜底層：$POOL_TAIL"; echo "訂閱層：$POOL_PAID"; echo "Claude 層（只派os）：${POOL_CLAUDE:-無}"; echo "API 層：${POOL_API:-（關，DCQ_ALLOW_API=1 才開）}"; echo "hard 不派：${EASY_ONLY:-無}"; echo "mid 不派：${EASY_STRICT:-無}"; echo "provider 上限：${PROV_MAX:-無}" ;;
   rescan) RESYNC_MIN_S=0 zen_resync "每日清單掃" ;;
   sync-catalog) shift; SYNC_ADD_ZEN="$SYNC_ADD_ZEN" SYNC_ADD_SUB="$SYNC_ADD_SUB" SYNC_ADD_GOFREE="$SYNC_ADD_GOFREE" SYNC_RM="$SYNC_RM" \
                 python3 "$(dirname "$(readlink -f "$0")")/catalog-sync" "$CAT/models.tsv" "$@" ;;

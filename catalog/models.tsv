@@ -66,6 +66,7 @@ free	opencode-run	google/gemini-3.8-flash	ok	curl tool_call OK 但單次 65s（1
 free	opencode-run	google/gemini-3.7-flash	ok	curl tool_call OK 但單次 110s（10-24）	AI Studio 免費層；單次回應慢，交 autorank 判；10-24 加，依能力手排，之後交 autorank	google/gemini-3.7-flash	any
 free	gemini-cli	gemini（AI Studio key）	unverified	settings 有 API key	免費層額度官方不再公布，看 AI Studio；本機沒有成功紀錄		any
 sub	claude-code	claude-fable-5-1／claude-opus-5-5／claude-sonnet-5-5／claude-haiku-5-5	ok	auth claude.ai pro	本 session 即是；子 agent 用 Agent 工具 model 參數		any
+sub	claude-code	claude-haiku-5-5	ok	claude -p 10-25 寫檔＋bash OK 4s（apiKeySource=none）	dcq Claude 層：bin/claude-exec，只在 DCQ_ORDER=sub（派os）最後兜底	claude/claude-haiku-5-5	any
 sub	codex	gpt-6.1-sol（預設）／gpt-6-sol／gpt-6-luna／gpt-6-astra	ok	auth ChatGPT	codex exec；codex 只接專屬執行位		any
 sub	omniroute	opencode-go/glm-5.3-flash	ok	calllog 3/3	Go 訂閱；實測 12s	opencode-go/glm-5.3-flash	any
 sub	omniroute	opencode-go/deepseek-v4.1-flash	ok	calllog 30/30	Go 訂閱；20s	opencode-go/deepseek-v4.1-flash	any

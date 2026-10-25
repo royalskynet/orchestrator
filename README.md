@@ -269,6 +269,7 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 
 各家免費額度實測（2026-10-25）：Groq 免費方案 8000 TPM，一次 opencode 請求約 8000 token，只放 easy；NVIDIA NIM 約 40 RPM，併發上限 2；OpenRouter `:free` 會被帳號的 guardrail（provider／資料政策限制）擋成 404，要先在 openrouter.ai 設定放行；Kilo Gateway 會記錄 prompt，機敏工單別派。
 - 訂閱層：`sub`（`opencode-go/*`）。
+- Claude 層（2026-10-25）：`sub` 且 `dc_id` 為 `claude/*`（目前 `claude/claude-haiku-5-5`），只在 `DCQ_ORDER=sub`（派os）排最後、API 前；派o／派of 不派。dc 經 `bin/claude-exec` 叫 `claude -p`（claude.ai 訂閱額度，與主 session 共用，provider 上限 1）。不能加 `--bare`（只認 API key＝按量計費）；`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` 有設時 bypassPermissions 會被降級，所以工具用 `--allowedTools` 明列。`DCQ_POOL_CLAUDE=` 關掉。
 - API 層：`api`，`DCQ_ALLOW_API=1` 才接，預設不用。
 
 兜底層與訂閱層也做層內排序（2026-10-21），規則同免費層：依每 PASS 秒數升冪，停滯率過高或 0 PASS 的墊該層最後，樣本不足留原位。只在層內排，不跨層搬。`DCQ_MODELS` 有設或 `DCQ_AUTORANK=0` 就不排。
@@ -281,11 +282,12 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 - **免費池剔出看得到**：`dcq plan` 首行印各 provider 數與剔出名單。清冊同步會帶進新 provider，各機 `opencode.json` 卻不會跟著改，所以清冊有、本機沒宣告的只要 1 隻（`DCQ_MISS_ALERT`），或主層只剩一家 provider，`dcq plan`／`dcq add` 就印 WARN 並推 TG；同一天名單沒變只推一則（#9）。`dcq doctor` 做同樣的健檢：被 `enabled_providers`／`disabled_providers` 刻意關掉的列為「略過」，其餘剔出算壞、exit 1。`dcq doctor --fix` 另印 `opencode.json` 補丁（key 用 `{env:}` 引用），用 `jq -s '.[0] * .[1]'` 併入。
 - **OmniRoute 健康檢查**：組池時對 `baseURL/models` 打一次（2 秒、結果快取 `DCQ_OR_HC_S`=120 秒），連不到就這次不派 `omniroute/*`（#12）。OmniRoute 在遠端、本機是 userspace Tailscale（沒有 TUN 介面）時，curl 與 opencode 都要走 Tailscale 的 SOCKS5／HTTP proxy：在 dcq 的環境設 `ALL_PROXY`／`HTTPS_PROXY`，否則健康檢查判掛、模型也連不到。`DCQ_OR_HC=0` 關閉檢查。
 
-Claude Code、Codex 也在清冊裡（`sub`），但它們不是 opencode 模型，dcq 不派；由主 session 的 Agent 工具或 `codex exec` 直接用。
+Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`sub`），dcq 不派；由主 session 的 Agent 工具或 `codex exec` 直接用。dcq 派的 Claude 只有上面 `claude/*` 那幾列。
 
 難度在 `dcq add` 時定一次：呼叫端給的優先，沒給一律 mid（2026-10-24 起預設不問 Laya；`DCQ_TRIAGE=1` 才跑 `bin/triage`），同一張工單中途不換：
 
 - `hard` 工單跳過清冊 `fit=easy` 的模型（有改錯、假扮工具、無限迴圈或隨機分配的前科）。
+- **best-of-N**（2026-10-25）：`hard` 工單在免費主層的強模型全在冷卻時，同派 `DCQ_BON_N`（預設 3，<2 關閉）隻沒冷卻的 `fit=easy` 模型，各在 `$DCQ_HOME/.bon/<id>.<k>` 的 git worktree 跑，第一隻過驗收的改動套回 cwd 再驗一次才算 PASS，其餘殺掉（被殺的不記帳）。cwd 不是 git 根目錄或有未 commit 改動就跳過，照原階梯。併發照常吃 per-model／per-provider 槽。依據 Large Language Monkeys（arXiv 2407.21787）。
 - `gaps.tsv` 第 7 欄記難度，autorank 依難度各排一份；舊紀錄沒有這欄，算進每個難度。`dcq rank hard` 看 hard 的排名。
 
 併發有三層：全域 `DCQ_JOBS`、per-model `DCQ_MODEL_MAX`，以及 per-provider 上限 `catalog/providers.tsv`（zen 2、opencode-go 4、google 2、kilo 2、nvidia 2、groq 1、omniroute 6）。Zen 免費池共用同一個 IP 閘，同時開太多會被判 abusive traffic 整池 403。

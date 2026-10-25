@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# claude-exec <message> -f <task.md> -m claude/<model> [opencode run 的其他旗標…]
+# dc 的 Claude 執行人（2026-10-25）：吃 opencode run 的參數子集，改叫 claude -p。
+# 只接 claude/<model>（Claude 訂閱額度，與主 session 共用；dcq 只在 DCQ_ORDER=sub 的最後一層派）。
+# 走 claude.ai OAuth：不用 --bare（bare 只認 ANTHROPIC_API_KEY＝按量計費）。
+# 不載 user settings（hooks／plugins）、MCP 全關、Skill／Agent 停用；權限明列——CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+# 有設時 bypassPermissions 會被降回 default，沒列 allowedTools 就寫不了檔（10-25 實測）。
+# 輸出：stream-json 轉成逐行文字給 dcq watchdog 看（.out 每個事件長一行）；result 為錯誤時印 `Error: claude-exec: <訊息>`、exit 1。
+# ponytail: ~/.claude/CLAUDE.md 仍會被讀（關掉它的旗標只有 --bare）；工具跑長測試時沒有事件，dcq 的 oc_busy 認不得 claude 子程序，
+# 超過 STALL_S 會被判 stall。要更準就讓 oc_busy 也認 claude。
+set -u
+msg="" f="" m=""
+[ $# -gt 0 ] && case "$1" in -*) ;; *) msg="$1"; shift ;; esac
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f|--file) f="${2:-}"; shift 2 ;;
+    -m|--model) m="${2:-}"; shift 2 ;;
+    --model=*) m="${1#--model=}"; shift ;;
+    --title|--dir|--log-level|--agent) shift 2 ;;
+    *) shift ;;   # --pure／--print-logs／--standalone／--auto 等 opencode 專屬旗標
+  esac
+done
+case "$m" in claude/?*) m="${m#claude/}" ;; *) echo "claude-exec: 只接 claude/<model>：${m:-（沒給 -m）}" >&2; exit 2 ;; esac
+[ -r "$f" ] || { echo "claude-exec: 任務檔讀不到：${f:-（沒給 -f）}" >&2; exit 2; }
+command -v claude >/dev/null || { echo "claude-exec: PATH 上沒有 claude" >&2; exit 2; }
+rules="$(dirname "$(dirname "$(readlink -f "$0")")")/executor-rules.md"
+ra=(); [ -r "$rules" ] && ra=(--append-system-prompt-file "$rules")
+# dc 的 START_RE 認這行判「已開工」
+echo "> build · claude/$m"
+tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+"${CLAUDE_BIN:-claude}" -p "$msg
+
+任務檔：${f}（先用 Read 完整讀完再動手）" --model "$m" --setting-sources project,local --strict-mcp-config \
+  --permission-mode bypassPermissions --allowedTools Bash Edit Write Read Glob Grep \
+  --disallowedTools Skill Agent Task --no-session-persistence ${ra[@]+"${ra[@]}"} \
+  --output-format stream-json --verbose 2>&1 \
+| jq --unbuffered -rR 'fromjson? // ("claude: " + .) |
+    if type == "string" then .
+    elif .type == "assistant" then (.message.content[]? |
+      if .type == "text" then .text elif .type == "tool_use" then "→ \(.name) \(.input | tostring | .[0:200])" else empty end)
+    elif .type == "result" then (if .is_error then "Error: claude-exec: \(.result // .subtype)" else "claude-exec: \(.subtype) turns=\(.num_turns)" end)
+    else empty end' | tee "$tmp"
+rc=${PIPESTATUS[0]}
+grep -q '^Error: claude-exec: ' "$tmp" && [ "$rc" = 0 ] && rc=1
+exit "$rc"
