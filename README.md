@@ -59,6 +59,7 @@ The rest of this README is in Traditional Chinese.
 
 - **`--auto`**：`permission.bash="ask"` 在 headless 下會被自動拒絕 —— 沒這道模型**一跑 bash 就死**（連 `ls` 都過不了），只能靠 write/edit 硬寫。執行人本來就要能跑 bash，故預設開；`DC_NO_AUTO=1` 可關（會嚴重降能）。
 - **`--pure`**：同模型 4.5s vs 16s（`agentpet.js` 外掛佔 ~11s）。opencode v2 移除了它，dc 看 `opencode run --help` 自動決定帶不帶。
+- **`--standalone`（v2）**：v2 的 `run` 預設交給共用背景服務，服務卡死時 run 零輸出乾等；dc 在 v2 一律帶 `--standalone` 用私有 server，`--print-logs` 也要它才帶服務端 ERROR log。
 - **cd 進工作目錄 + `-f`**：任務檔常在專案外，dc 先 cd 進工作目錄（1.18.x 另帶 `--dir`；v2 已移除），`-f` 附加任務檔。
 - **message 放最前面**：`-f` 是陣列旗標，會把後續位置參數當附件路徑吞掉。
 - **驗收在工作目錄底下跑**：驗收斷言用相對路徑，在呼叫端 cwd 跑會全部找不到檔案而誤判 FAIL。

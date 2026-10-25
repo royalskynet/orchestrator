@@ -70,8 +70,9 @@ unset DCQ_POOL_TAIL
 printf '#!/bin/sh\necho "$*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; chmod +x "$T/bin/hpush"
 export DC_PUSH=1
 # 第 1–4 段 DCQ_POOL_TAIL="" 讓主層只剩 Zen 一家，add 時已觸發「單一 provider」告警蓋了今天的戳記
-ck "主層只剩一家 provider 時也告警（第 1–4 段蓋了戳記）" 'ls "$H"/pool-alert.* >/dev/null 2>&1'
-rm -f "$H"/pool-alert.*
+ck "主層只剩一家 provider 時也告警（第 1–4 段蓋了戳記）" 'ls "$DCQ_HOME"/logs/pool-alert.* >/dev/null 2>&1'
+ck "告警戳記不進冷卻目錄 .health" '! ls "$H"/pool-alert.* >/dev/null 2>&1'
+rm -f "$DCQ_HOME"/logs/pool-alert.*
 if dcq doctor > "$T/doc" 2>&1; then echo "FAIL doctor 空設定應非 0"; fail=1; else echo "ok  doctor 空設定 exit 非 0"; fi
 ck "doctor 列出剔出的 kilo/*" 'grep -q "FAIL.*kilo/" "$T/doc"'
 dcq doctor --fix > "$T/fix" 2>"$T/fix.err"

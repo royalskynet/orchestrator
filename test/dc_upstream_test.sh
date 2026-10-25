@@ -34,8 +34,12 @@ case "$FAKE" in
   goquota)  echo '> build · x'; printf '\033[91m\033[1mError: \033[0mGo usage limit exceeded\n'; exit 1 ;;
   gquota)   echo '> build · x'; echo "$e You exceeded your current quota, please check your plan and billing details. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20\""; sleep 30 ;;
   grpm)     echo '> build · x'; echo "$e You exceeded your current quota. quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier\""; sleep 30 ;;
+  # 10-25：型錄沒有這隻（v2 原文含 ANSI；1.18.x 是 ProviderModelNotFoundError），opencode 自己 rc=1
+  nomodel)  echo '> build · x'; printf '\033[91m\033[1mError: \033[0mModel unavailable: opencode/jev-1.13-free\n'; exit 1 ;;
+  nomodel1) echo '> build · x'; echo 'timestamp=2026-10-24T19:14:33.564Z level=ERROR run=64a90ea3 message="failed to read file" error="ProviderModelNotFoundError: Model not found: opencode/jev-1.13-free. Did you mean: beam-free"'; exit 1 ;;
   quotatalk) echo '> build · x'; echo 'log 裡寫著 Free usage limit reached 是另一回事'; echo done ;;
   ok)       : > "$T/called"; echo '> build · x'; echo done ;;
+  args)     echo "$*" > "$T/args"; echo '> build · x'; echo done ;;
   selfcat)  echo '> build · x'; cat "$DCSRC"; echo done ;;
   hang)     sleep 30 ;;
   slow)     echo '> build · x'; sleep 4; echo done ;;
@@ -59,6 +63,14 @@ try() { local lim="$1" key="$2"; shift 2; rm -f "$VERIFIED"; local s=$(date +%s)
   local k=nokey; grep -q "$key" "$T/err" && k=key
   echo "$rc:$v:$f:$k"; }
 
+# 10-25：v2 必帶 --standalone（背景服務卡死時 run 零輸出），1.18.x 照舊 --pure／--dir
+try 8 x FAKE=args DC_OC_V2=1 >/dev/null; a2="$(cat "$T/args")"
+has() { case " $1 " in *" $2 "*) echo y ;; *) echo n ;; esac; }   # bash 3.2 的 $() 裡不能放 case
+chk "v2 帶 --standalone 不帶 --pure" "$(has "$a2" --standalone)$(has "$a2" --pure)" yn
+try 8 x FAKE=args DC_OC_V2=0 >/dev/null; a1="$(cat "$T/args")"
+chk "1.18 帶 --pure 不帶 --standalone" "$(has "$a1" --standalone)$(has "$a1" --pure)" ny
+chk "型錄沒有（v2 Model unavailable）判上游不可用" "$(try 8 '上游不可用（Model unavailable: opencode/jev' FAKE=nomodel)" 1:no:fast:key
+chk "型錄沒有（1.18 ProviderModelNotFoundError）判上游不可用" "$(try 8 '上游不可用（ProviderModelNotFoundError' FAKE=nomodel1)" 1:no:fast:key
 chk "Model is unavailable 提早結束"       "$(try 8 '上游不可用' FAKE=unavail)"  1:no:fast:key
 chk "Endpoint is unavailable 提早結束"    "$(try 8 'Endpoint is unavailable' FAKE=endpoint)" 1:no:fast:key
 chk "已下架提早結束"                       "$(try 8 'has been deprecated' FAKE=gone)" 1:no:fast:key

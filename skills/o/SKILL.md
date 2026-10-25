@@ -136,6 +136,7 @@ dc <task.md> <cwd>; echo "rc=$?"   # 0 = 驗收重跑 K 次全過
 
 - **`--auto` 必開**：`permission.bash="ask"` 在 headless 下會被自動拒絕 —— 沒這道模型**一跑 bash 就死**（連 `ls` 都過不了），只能靠 write/edit 硬寫。dc 已內建，`DC_NO_AUTO=1` 可關。
 - **`--pure`**：同一模型 4.5s vs 16s（`agentpet.js` 外掛佔 ~11s）。opencode v2 已移除，dc 依 `run --help` 自動決定帶不帶。
+- **`--standalone`（v2）**：v2 預設走共用背景服務，卡死時零輸出；dc 在 v2 一律帶，額度／限流偵測也靠它帶出的 ERROR log。
 - **cd 進工作目錄 + `-f` 必給**：任務檔常在專案外，dc 先 cd 進工作目錄（1.18.x 另帶 `--dir`）、`-f` 附加任務檔。dc 已內建。
 - **message 必須放最前面**：`-f` 是陣列旗標，會把後續位置參數一起當附件路徑吞掉。
 - **驗收在工作目錄底下跑**：斷言用相對路徑，在呼叫端 cwd 跑會誤判 FAIL。dc 已處理。

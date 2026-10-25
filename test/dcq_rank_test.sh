@@ -84,6 +84,9 @@ got="$(DCQ_MODELS= DCQ_POOL_ZEN="a" DCQ_POOL_GO="" DCQ_POOL_PAID="opencode-go/g1
 printf '{"at":"2000-01-01T00:00:00","upstream":["g1"]}' > "$DCQ_GO_STATE"
 got="$(DCQ_MODELS= DCQ_POOL_ZEN="a" DCQ_POOL_GO="" DCQ_POOL_PAID="opencode-go/g1 opencode-go/g2" dcq rank | sed -n 's/^訂閱層：//p')"
 [ "$got" = "opencode-go/g1 opencode-go/g2" ] || { echo "FAIL stale go state: [$got]"; fail=1; }
+# omniroute/* 要在 opencode.json 宣告才留池（fit_pool）；這段只驗 Go 免費同步，給一份宣告 nim-pool 的設定、略過健康檢查
+mkdir -p "$T/cfg/opencode"; echo '{"provider":{"omniroute":{"models":{"nim-pool":{}}}}}' > "$T/cfg/opencode/opencode.json"
+export XDG_CONFIG_HOME="$T/cfg" DCQ_OR_HC=0
 # Go 免費同步：兜底層 upstream 沒有的 opencode-go/*-free 移出、新 -free 接 opencode-go 段尾；omniroute/* 不動
 printf '{"at":"%s","upstream":["f1-free","newf-free","oldf-free"],"first_seen":{"f1-free":"base","oldf-free":"base","newf-free":"2026-10-15"}}' "$(date +%FT%T)" > "$DCQ_GO_STATE"
 got="$(DCQ_MODELS= DCQ_POOL_ZEN="a" DCQ_POOL_GO="" DCQ_POOL_PAID="" DCQ_POOL_TAIL="opencode-go/f1-free opencode-go/gone-free omniroute/nim-pool" dcq rank | sed -n 's/^兜底層：//p')"

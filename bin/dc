@@ -370,7 +370,9 @@ RL_RE='small=false.*[R]ate limit exceeded'
 # 首字母加 [] 才不會被模型 cat 本檔時自比中）；Google 是 level=ERROR log。
 QUOTA_RE='(level=ERROR.*small=false|Error: ).*([F]ree usage limit reached|[F]reeUsageLimitError|[G]o usage limit exceeded|[Y]ou exceeded your current quota|[Q]uota exceeded for metric|RESOURCE_[E]XHAUSTED)'
 # 上游不可用（Model/Endpoint is unavailable、已下架）opencode 一樣在程序內重試約 67s 才 rc=1（2026-10-11 實測），提早結束讓 dcq 換模型。
-UA_RE='small=false.*([U]pstream request failed|has been [d]eprecated)'
+# opencode 型錄沒有這隻（清冊從 Zen /models 自動加、models.dev 還沒收，10-25 jev-1.13-free 兩台 37 筆）：
+# v2 印「Error: [M]odel unavailable: <id>」、1.18.x 是 [P]roviderModelNotFoundError，同屬上游不可用，不算模型的帳。
+UA_RE='(small=false.*([U]pstream request failed|has been [d]eprecated)|Error: .*[M]odel unavailable: |[P]roviderModelNotFoundError)'
 # opencode 開工就印「> <agent> · <model>」，在模型回應之前（上游不可用時也照印）。
 # DC_START_S 秒內沒出現＝卡在送出請求前，ERROR log 也是空的（2026-10-11 實證：400s 零輸出）。
 # 首輸出之後的停滯歸 dcq 的 STALL_S 管（fix 9775 §23），這裡不重複。
@@ -385,7 +387,10 @@ trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf" "$pintmp"' EXIT
 # 看 run --help 有沒有 --pure 決定（0.2s），工作目錄一律再 cd 一次，兩版都對。
 # DC_OC_V2=0／1 可跳過偵測（測試的假 opencode 不認 --help）
 case "${DC_OC_V2:-}" in 0) oc_v2=0 ;; 1) oc_v2=1 ;; *) if opencode run --help 2>&1 | grep -q -- '--pure'; then oc_v2=0; else oc_v2=1; fi ;; esac
-if [ "$oc_v2" = 0 ]; then ocflags=(--pure --log-level ERROR --dir "$d"); else ocflags=(--log-level error); fi
+# v2 的 run 預設交給共用背景服務（opencode serve --service）：服務卡死時 run 零輸出乾等（10-25 M2 服務跑 8h 後
+# 每張都 60s 判不開工，--standalone 同單 10s 過），--print-logs 也只有 --standalone 才帶服務端 ERROR log（額度／限流偵測靠它）。
+# OPENCODE_CONFIG_CONTENT 在 v2.1.2 --standalone 仍生效（10-25 M2 實測 instructions 有讀到）。
+if [ "$oc_v2" = 0 ]; then ocflags=(--pure --log-level ERROR --dir "$d"); else ocflags=(--standalone --log-level error); fi
 { cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" opencode run \
   "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。
@@ -455,7 +460,7 @@ EOF_SCOPE
 fi
 [ "$rl" = 5 ] && { echo "dc: 上游額度用完（$(grep -m1 -oE "$QUOTA_RE" "$out" | grep -oE '(Free usage limit reached|FreeUsageLimitError|Go usage limit exceeded|You exceeded your current quota|Quota exceeded for metric[^"]*|RESOURCE_EXHAUSTED)' | head -1 | cut -c1-160)），已提早結束" >&2; grep -qE 'PerMinute|per minute' "$out" && echo "dc: 額度窗口＝每分鐘" >&2; exit 1; }
 [ "$rl" = 1 ] && { echo "dc: 上游限流（429），opencode 會照 retry-after 久等重試，已提早結束" >&2; exit 1; }
-[ "$rl" = 2 ] && { echo "dc: 上游不可用（$(grep -m1 -oE '(Upstream request failed[^"]*|Model [^ ]+ has been deprecated)' "$out")），已提早結束" >&2; exit 1; }
+[ "$rl" = 2 ] && { echo "dc: 上游不可用（$(grep -m1 -oE '(Upstream request failed[^"]*|Model [^ ]+ has been deprecated|[M]odel unavailable: [^ ]+|[P]roviderModelNotFoundError: [^.]+)' "$out")），已提早結束" >&2; exit 1; }
 [ "$rl" = 4 ] && { echo "dc: Zen 免費閘道判濫用（Detect Abuse Traffic），整個 Zen 免費池停用 ${ZEN_GATE_S}s（${ZEN_GATE}），已提早結束" >&2; exit 1; }
 [ "$rl" = 3 ] && { echo "dc: opencode ${START_S}s 內沒開工（無「> agent · model」行），判定卡住，已結束" >&2; exit 1; }
 [ "$rc" -eq 0 ] || { echo "dc: opencode run rc=${rc}（常見：上游掛=1、逾時=124、權限拒絕）" >&2; exit "$rc"; }

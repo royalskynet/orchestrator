@@ -436,7 +436,7 @@ to_midnight() { local h m s; IFS=: read -r h m s <<<"$(TZ="$1" date +%H:%M:%S)";
 # Zen 免費額度按出口 IP＋UTC 日（台北 08:00 重置），一隻撞到＝整個 Zen 免費池都沒了 → provider 級冷卻 .health/@zen.cool。
 # Google AI Studio 免費層 RPD 按模型、太平洋時間午夜重置 → 該模型冷卻到那時；每分鐘窗口（RPM）只冷 QUOTA_RPM_COOL_S。
 # Go usage limit 只擋付費 Go 模型，*-free 照用（docs/go）→ 只冷該模型 QUOTA_GO_COOL_S。
-# ponytail: 冷卻狀態只在本機 $Q；多機共用同一出口 IP 時別台不知道（issue #10），要共用再把 @zen.cool 換成同步檔或 HTTP。
+# ponytail: 冷卻狀態只在本機 ${Q}；多機共用同一出口 IP 時別台不知道（issue #10），要共用再把 @zen.cool 換成同步檔或 HTTP。
 QUOTA_GO_COOL_S="${DCQ_QUOTA_GO_COOL_S:-3600}"
 QUOTA_RPM_COOL_S="${DCQ_QUOTA_RPM_COOL_S:-120}"
 cool_quota() {  # $1=model $2=該次 .out
@@ -639,14 +639,15 @@ pool_summary() {
 # 預設 1 隻就報（M2 追加建議，issue #9）：清冊同步帶進新 provider 時，各機 opencode.json 不會跟著同步，要當場提示。
 # TG 每天一則；同一天剔出名單變了（又帶進新 provider）再推一則。
 pool_alert() {
-  local np st="$Q/.health/pool-alert.$(date +%F)" msg
+  # 戳記放 logs/ 不放 .health/：.health 是冷卻目錄，測試與 status 以「.health 為空」判沒冷卻（10-25 門檻降到 1 隻後誤判）
+  local np st="$Q/logs/pool-alert.$(date +%F)" msg
   np="$(for m in ${MODELS_MANUAL:-$MODELS}; do prov_of "$m"; done | sort -u | wc -l | tr -d ' ')"
   local bad; bad="$(miss_split)"
   { [ -n "$bad" ] && [ "$(set -- $bad; echo $#)" -ge "${DCQ_MISS_ALERT:-1}" ]; } || [ "$np" -le 1 ] || return 0
   msg="⚠️ dcq 免費池縮水：$(pool_summary | head -1)。清冊有、本機 opencode.json 沒宣告的，dcq doctor --fix 印補丁"
   echo "dcq: WARN ${msg}" >&2
   [ "$(cat "$st" 2>/dev/null)" = "${bad:-single}" ] && return 0
-  mkdir -p "$Q/.health"; echo "${bad:-single}" > "$st"
+  mkdir -p "$Q/logs"; echo "${bad:-single}" > "$st"
   { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && { hpush "$msg" >/dev/null 2>&1 & }
   return 0
 }
