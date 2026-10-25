@@ -2,7 +2,7 @@
 
 把你手上已知的各種 LLM 當成執行人，依實測表現智慧調配的工單調度器。一個任務檔進、機械驗收過的成果出。
 
-- **模型來源不限 opencode**：Zen 免費池、opencode-go 訂閱、經本機 OmniRoute 轉接的 NIM／OpenRouter 等供應商、付費 API，全部登記在 `catalog/models.tsv`，同一套階梯調度。opencode CLI 只當 agent 外殼（工具呼叫、檔案編輯）。
+- **模型來源不限 opencode**：Zen 免費池、opencode-go 訂閱、直連的 Kilo／NVIDIA NIM／Groq／Google AI Studio／OpenRouter 免費模型（不必裝 OmniRoute）、經 OmniRoute 轉接的供應商（選配）、付費 API，全部登記在 `catalog/models.tsv`，同一套階梯調度。opencode CLI 只當 agent 外殼（工具呼叫、檔案編輯）。
 - **智慧加權**：每隻模型依 `gaps.tsv` 實績算「平均幾秒換到一次通過」，加貝氏平滑（樣本少的先拉向全池平均），層內自動重排。0 PASS 的進冷宮，停滯率高的進懲罰層。
 - **多層 fallback**：免費 → 懲罰 → 兜底 → 冷宮 → 訂閱 → API（API 預設關）。觸發詞：派o＝免費優先、全敗升訂閱；派of＝只用免費；派os＝訂閱優先。
 - **完成由腳本判定**：exit code＝工單自帶驗收腳本（`wo-verify`）的結果，不是模型自述。
@@ -24,7 +24,7 @@ git clone https://github.com/royalskynet/orchestrator && cd orchestrator && ./in
 
 **Orchestrator** dispatches work orders to whatever LLMs you already have access to, and picks among them by measured performance. One task file goes in; the work comes back only when a machine check says it is done.
 
-- **Any model you can reach.** Zen free models, opencode-go subscription models, providers routed through a local OmniRoute (NVIDIA NIM, OpenRouter, and others), and paid APIs are all listed in `catalog/models.tsv` and scheduled by the same ladder. The opencode CLI is used only as the agent harness (tool calls, file edits).
+- **Any model you can reach.** Zen free models, opencode-go subscription models, direct free providers (Kilo, NVIDIA NIM, Groq, Google AI Studio, OpenRouter — no OmniRoute needed), providers routed through an optional OmniRoute, and paid APIs are all listed in `catalog/models.tsv` and scheduled by the same ladder. The opencode CLI is used only as the agent harness (tool calls, file edits).
 - **Weighted ranking.** Each model is scored by expected seconds per pass from its own run history (`gaps.tsv`), with a Bayesian prior that pulls low-sample models toward the pool mean. Models with zero passes move to a cold tier; models that stall often move to a penalty tier.
 - **Tier ladder.** free → penalty → fallback → cold → subscription → API (API off by default). Order modes: `default` (free first, then subscription), `free` (free only), `sub` (subscription first).
 - `dc <task.md> [cwd]` dispatches one work order. The exit code is the exit code of the task's own acceptance script (`wo-verify`), not the model's claim of success.
@@ -257,9 +257,17 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 
 `catalog/models.tsv` 是本機確實可調用模型的唯一清冊，每列標 `free`（免費）／`sub`（付費訂閱）／`api`（付費 API）。dcq 依清冊組層，順序固定為免費 → 訂閱 → API：
 
-- 免費層：`free` 且 `dc_id` 無斜線（Zen 免費，只能經 `opencode run`），加上 `opencode-go/*-free`（2026-10-22 起，`DCQ_GOFREE_MAIN=0` 關）。
-- 兜底層：其餘 `free` 且 `dc_id` 有斜線（`omniroute/*`，以及無 OmniRoute 機器用的直連 `openrouter/*`、`nvidia/*`）。`fit=easy-only` 的只派 easy 工單（`or-free` 23 跑 1 過）。
-  - 直連模型要有 key（`OPENROUTER_API_KEY`／`NVIDIA_API_KEY`，或 opencode `auth.json`），且 `opencode.json` 的 `enabled_providers` 沒排除該 provider，否則組池時剔除。`omniroute/*` 沒在 `opencode.json` 宣告也剔除，所以沒裝 OmniRoute 的機器不必再設 `DCQ_POOL_TAIL=`。
+- 免費層：`free` 且 `dc_id` 無斜線（Zen 免費，只能經 `opencode run`），加上 `opencode-go/*-free`（2026-10-22 起，`DCQ_GOFREE_MAIN=0` 關）與直連的 `kilo/*`、`google/*`、`nvidia/*`、`groq/*`、`openrouter/*`（2026-10-25 起）。
+- 兜底層：只剩 `omniroute/*`。`fit=easy-only` 的只派 easy 工單（`or-free` 23 跑 1 過）。
+  - 直連模型要有 key（`NVIDIA_API_KEY`／`GROQ_API_KEY`／`GEMINI_API_KEY`／`OPENROUTER_API_KEY`，或 opencode `auth.json`，或 `opencode.json` 的 `options.apiKey`），`opencode.json` 的 `enabled_providers` 沒排除該 provider，且（google 以外）模型列在 `provider.<p>.models`，否則組池時剔除。`omniroute/*` 沒在 `opencode.json` 宣告也剔除。
+
+**不裝 OmniRoute**：清冊的 `omniroute/*` 會自動剔出，其餘照常。設定步驟：
+
+1. 申請免費 key（[NVIDIA build](https://build.nvidia.com)、[Groq](https://console.groq.com)、[Google AI Studio](https://aistudio.google.com)；Kilo 免 key）放進環境變數。
+2. `dcq doctor --fix > /tmp/patch.txt`，取 `{` 開頭那段存成 `patch.json`，`jq -s '.[0] * .[1]' ~/.config/opencode/opencode.json patch.json` 併入（key 只寫 `{env:}` 引用）。
+3. 再跑 `dcq doctor`，exit 0 就完成。
+
+各家免費額度實測（2026-10-25）：Groq 免費方案 8000 TPM，一次 opencode 請求約 8000 token，只放 easy；NVIDIA NIM 約 40 RPM，併發上限 2；OpenRouter `:free` 會被帳號的 guardrail（provider／資料政策限制）擋成 404，要先在 openrouter.ai 設定放行；Kilo Gateway 會記錄 prompt，機敏工單別派。
 - 訂閱層：`sub`（`opencode-go/*`）。
 - API 層：`api`，`DCQ_ALLOW_API=1` 才接，預設不用。
 
@@ -280,7 +288,7 @@ Claude Code、Codex 也在清冊裡（`sub`），但它們不是 opencode 模型
 - `hard` 工單跳過清冊 `fit=easy` 的模型（有改錯、假扮工具、無限迴圈或隨機分配的前科）。
 - `gaps.tsv` 第 7 欄記難度，autorank 依難度各排一份；舊紀錄沒有這欄，算進每個難度。`dcq rank hard` 看 hard 的排名。
 
-併發有三層：全域 `DCQ_JOBS`、per-model `DCQ_MODEL_MAX`，以及 per-provider 上限 `catalog/providers.tsv`（zen 2、opencode-go 4、omniroute 3）。Zen 免費池共用同一個 IP 閘，同時開太多會被判 abusive traffic 整池 403。
+併發有三層：全域 `DCQ_JOBS`、per-model `DCQ_MODEL_MAX`，以及 per-provider 上限 `catalog/providers.tsv`（zen 2、opencode-go 4、google 2、kilo 2、nvidia 2、groq 1、omniroute 6）。Zen 免費池共用同一個 IP 閘，同時開太多會被判 abusive traffic 整池 403。
 
 ### Zen 封鎖閘（`zen-gate`）
 

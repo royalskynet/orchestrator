@@ -669,9 +669,12 @@ oc_patch() {
     case "$p" in
       kilo) jq -n --arg k "$k" '{provider:{kilo:{npm:"@ai-sdk/openai-compatible",name:"Kilo Gateway",options:{baseURL:"https://api.kilo.ai/api/gateway/v1"},models:{($k):{}}}}}' ;;
       omniroute) jq -n --arg k "$k" '{provider:{omniroute:{npm:"@ai-sdk/openai-compatible",name:"OmniRoute",options:{baseURL:"http://<OmniRoute 主機>:20128/v1",apiKey:"{env:OMNIROUTE_API_KEY}"},models:{($k):{}}}}}' ;;
-      google|openrouter|nvidia)
-        case "$p" in google) v=GEMINI_API_KEY ;; openrouter) v=OPENROUTER_API_KEY ;; *) v=NVIDIA_API_KEY ;; esac
-        jq -n --arg p "$p" --arg v "{env:$v}" '{provider:{($p):{options:{apiKey:$v}}}}' ;;
+      nvidia) jq -n --arg k "$k" '{provider:{nvidia:{npm:"@ai-sdk/openai-compatible",name:"NVIDIA NIM",options:{baseURL:"https://integrate.api.nvidia.com/v1",apiKey:"{env:NVIDIA_API_KEY}"},models:{($k):{}}}}}' ;;
+      # openrouter／groq 是 opencode 內建 provider，只缺 key 與 models 宣告（oc_declared 要求 models 有列）
+      openrouter|groq)
+        case "$p" in openrouter) v=OPENROUTER_API_KEY ;; *) v=GROQ_API_KEY ;; esac
+        jq -n --arg p "$p" --arg k "$k" --arg v "{env:$v}" '{provider:{($p):{options:{apiKey:$v},models:{($k):{}}}}}' ;;
+      google) jq -n '{provider:{google:{options:{apiKey:"{env:GEMINI_API_KEY}"}}}}' ;;
     esac
   done | jq -s 'reduce .[] as $x ({}; . * $x)'
 }
