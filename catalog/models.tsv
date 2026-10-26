@@ -73,6 +73,7 @@ free	opencode-run	kilo/reflection/beam-free	ok	oc-free-check OK 2.3s（10-26）�
 free	opencode-run	kilo/xingchen-agi/xing4.0-29b-a4b:free	ok	oc-free-check OK 2.3s（10-26）	Kilo 免 key；29B A4B，小模型故 easy；10-26 freepool propose 加	kilo/xingchen-agi/xing4.0-29b-a4b:free	easy
 free	opencode-run	kilo/stealth/glyph-cluster	ok	oc-free-check OK 4.6s（10-26）；freepool probe 200 空內容（10-26，疑 reasoning 吃光 token，fix 9997；待真實派工驗）	Kilo 免 key；stealth 模型（來源未公開、可能被上游收走對話），零價期間才可用，故 easy；10-26 freepool propose 加	kilo/stealth/glyph-cluster	easy
 free	opencode-run	kilo/openrouter/free	ok	oc-free-check OK 3.5s（10-26）；freepool probe（OmniRoute test-all）OK（10-26）	OpenRouter 免費池隨機分配，等於原 omniroute/or-free 的替代直連版；or-free 實績 23 跑 1 過故 easy-only；10-26 加	kilo/openrouter/free	easy-only
+free	opencode-run	kilo/liquid/lfm-2.5-2.6b:free	ok	freepool daily probe（OmniRoute test-all）OK（10-26 09:22）	Kilo 免 key；2.6B 極小模型，能力有限故 easy-only；10-26 freepool daily 提議、使用者核准加	kilo/liquid/lfm-2.5-2.6b:free	easy-only
 free	gemini-cli	gemini（AI Studio key）	unverified	settings 有 API key	免費層額度官方不再公布，看 AI Studio；本機沒有成功紀錄		any
 sub	claude-code	claude-fable-5-1／claude-opus-5-5／claude-sonnet-5-5／claude-haiku-5-5	ok	auth claude.ai pro	本 session 即是；子 agent 用 Agent 工具 model 參數		any
 sub	claude-code	claude-haiku-5-5	ok	claude -p 10-25 寫檔＋bash OK 4s（apiKeySource=none）	dcq Claude 層：bin/claude-exec，只在 DCQ_ORDER=sub（派os）最後兜底	claude/claude-haiku-5-5	any
