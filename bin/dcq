@@ -1520,9 +1520,12 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
   懲罰層＝停滯率高的累犯；冷宮＝0 PASS；兩者在兩層之後，層內 opencode 的排前面；7 天沒新樣本假釋回原層。
   兜底層＝omniroute/*（本機已空）。
 
-■ freepool 層的免費保證閘（kilo／openrouter）
-  兩家的零價名單每天會變。dc 派 kilo/*、openrouter/* 前讀上游價格目錄快取（24h，不打模型），
-  現價非零或缺 :free 後綴就拒派；判不了也不派（fail-closed）。
+■ freepool：上工的是「層」，bin/freepool 是這層的守門與補貨
+  派工＝dcq 從 freepool 層挑模型 → dc → opencode run，跟 opencode free 層同一套執行路徑。
+  bin/freepool 本身不派工，負責三件事：派前驗價（dc 自動呼叫 freepool verify）、每天補貨（freepool daily）、
+  手動實打新模型（freepool probe）。
+  kilo／openrouter 的零價名單每天會變。dc 派 kilo/*、openrouter/* 前讀上游價格目錄快取（24h，不打模型），
+  現價非零或缺 :free 後綴就拒派；判不了也不派（fail-closed）。google／nvidia／groq 沒有價格目錄，靠清冊與 provider 規則判免費。
   實打 kilo 只准 `freepool probe`（經 OmniRoute test-all 逐個、≤5 隻）：kilo 免 key 額度全帳號共用，
   併發探測會整批回 Free usage limit reached。
 
