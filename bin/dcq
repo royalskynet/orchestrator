@@ -79,6 +79,7 @@ MODELS="${DCQ_MODELS:-$POOL_ZEN${POOL_GO:+ $POOL_GO}}"
 RANK_MIN="${DCQ_RANK_MIN:-10}"; RANK_WIN="${DCQ_RANK_WIN:-30}"; RANK_STALL_PCT="${DCQ_RANK_STALL_PCT:-30}"
 RANK_ZERO_N="${DCQ_RANK_ZERO_N:-3}"   # 設 0＝停用短路
 RANK_PRIOR_K="${DCQ_RANK_PRIOR_K:-2}"   # 貝氏平滑的虛擬嘗試數；0＝原始 s/pass
+RANK_OUTAGE_N="${DCQ_RANK_OUTAGE_N:-3}"   # 同 10 分鐘桶有幾隻別的模型出事就當全池故障；設很大＝停用
 # 週探測（oc-probe/：launchd 06:00 的 oc-probe daily 每 7 天跑一次 oc-free-check --tsv）：只用最新一批、且 ≤PROBE_MAX_H 小時。
 #   - 探測非 OK → 移到免費層最後（比 zero/demoted 更後；明天探測回 OK 就自己回來）
 #   - 樣本不足（manual）的位置裡依探測秒數排序，沒探測資料的排在有資料的後面
@@ -95,18 +96,23 @@ rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計�
   local cut; cut="$(date -v-"${PROBE_MAX_H}"H +%F_%T 2>/dev/null || date -d "-${PROBE_MAX_H} hours" +%F_%T)"
   local pc; pc="$(date -v-"${RANK_PAROLE_D}"d +%F_%T 2>/dev/null || date -d "-${RANK_PAROLE_D} days" +%F_%T)"
   awk -F'\t' -v order="$1" -v min="$RANK_MIN" -v win="$RANK_WIN" -v sp="$RANK_STALL_PCT" \
-      -v zn="$RANK_ZERO_N" -v mode="${2:-order}" -v pf="$pf" -v cut="$cut" -v pc="$pc" -v stall="${STALL_S:-200}" -v tier="${3:-}" -v pk="$RANK_PRIOR_K" '
+      -v zn="$RANK_ZERO_N" -v mode="${2:-order}" -v pf="$pf" -v cut="$cut" -v pc="$pc" -v stall="${STALL_S:-200}" -v tier="${3:-}" -v pk="$RANK_PRIOR_K" -v ob="$RANK_OUTAGE_N" '
     # QUOTA＝額度用完（08:00 重置），不是壞，當沒資料
     FILENAME==pf { if ($1>=cut && $4!="QUOTA") { if ($1>pl) pl=$1; PT[$1,$3]=PT[$1,$3] (PT[$1,$3]=="" ? "" : ",") $4 ":" $5 } next }
+    # 全池故障（10-27）：同一個 10 分鐘桶裡出事（quota／upstream／卡住）的不同模型數，跨難度算。
+    # 10-25 03:58–05:13 Zen 全 quota、Go 訂閱全掛，opencode-go/beam-free 那段卡 8 次被算成自己停滯 80% 降懲罰層。
+    $5~/^(quota|upstream|stall|slow|spin)$/ { bk=substr($1,1,15); if (!((bk,$2) in BM)) { BM[bk,$2]=1; NB[bk]++ } }
     # 第 7 欄＝工單難度（2026-10-19 起）：別的難度的紀錄不算；舊紀錄沒有這欄，算進每個難度
     tier!="" && $7!="" && $7!=tier { next }
     $4==0 && $3+0>pgmax { pgmax=$3+0; pgm=$2 }
-    { m=$2; LT[m]=$1; k=++cnt[m]; R[m,k]=$4; W[m,k]=$5; D[m,k]=($6!="" ? $6 : $3); if ($4==0) LP[m]=$1 }
+    { m=$2; LT[m]=$1; k=++cnt[m]; R[m,k]=$4; W[m,k]=$5; D[m,k]=($6!="" ? $6 : $3); BK[m,k]=substr($1,1,15); if ($4==0) LP[m]=$1 }
     END {
       nm=split(order, L, " ")
       for (i=1; i<=nm; i++) {
         m=L[i]; n=0; p=0; s=0; d=0; st=cnt[m]-win+1; if (st<1) st=1
-        for (k=st; k<=cnt[m]; k++) { if (R[m,k]==2 || W[m,k]=="upstream" || W[m,k]=="quota") continue; n++; d+=D[m,k]; if (R[m,k]==0) p++; if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin") s++ }
+        for (k=st; k<=cnt[m]; k++) { if (R[m,k]==2 || W[m,k]=="upstream" || W[m,k]=="quota") continue
+          if (W[m,k]~/^(stall|slow|spin)$/ && NB[BK[m,k]]-1>=ob) continue   # 同桶 ≥ob 隻別的模型也出事＝上游故障
+          n++; d+=D[m,k]; if (R[m,k]==0) p++; if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin") s++ }
         N[i]=n; P[i]=p; S[i]=s; DS[i]=d; pr[i]=(n ? p/n : 0); tn+=n; tp+=p; td+=d
       }
       # 貝氏平滑（2026-10-22）：每隻先加 pk 次「全池平均」的虛擬嘗試（平均秒數 mu_d、平均通過率 mu_p），
@@ -446,22 +452,22 @@ cool_upstream() {
 # 到某時區下一個 00:00 還有幾秒（BSD／GNU date 都吃 TZ=）
 to_midnight() { local h m s; IFS=: read -r h m s <<<"$(TZ="$1" date +%H:%M:%S)"; echo $(( 86400 - (10#$h * 3600 + 10#$m * 60 + 10#$s) )); }
 # 額度用完（issue #8／#10／#11）：冷卻到額度重置，不是固定 15 分鐘——白試只會再撞一次。
-# Zen「Free usage limit reached」一隻撞到＝整個 Zen 免費池都擋 → provider 級冷卻 .health/@zen.cool，但只冷 ZEN_QUOTA_COOL_S：
-# 10-24 起上游風控（session ID／請求特徵／CLI 版本）也回同一字串，不是每日額度（anomalyco/opencode#59280、#59252，
-# trefeon/pi-freeflow#118／#120），重置時間官方未公開；10-26 實例：M4 當天只打 2 次就被擋、冷到 UTC 午夜白停 9 小時。
+# Zen「Free usage limit reached」一隻撞到＝整個 Zen 免費池都擋 → provider 級冷卻 .health/@zen.cool，冷到 UTC 午夜（台北 08:00）：
+# 10-27 使用者查證 Zen 免費層確有每日限額、撞到要等 08:00 重置，10-26 改的 30 分短冷卻改回（短冷卻只會每半小時再撞一次）。
+# DCQ_ZEN_QUOTA_COOL_S 有設就改用固定秒數（測試或風控誤擋時用）。
 # Google AI Studio 免費層 RPD 按模型、太平洋時間午夜重置 → 該模型冷卻到那時；每分鐘窗口（RPM）只冷 QUOTA_RPM_COOL_S。
 # Go usage limit 只擋付費 Go 模型，*-free 照用（docs/go）→ 只冷該模型 QUOTA_GO_COOL_S。
 # ponytail: 冷卻狀態只在本機 ${Q}；多機共用同一出口 IP 時別台不知道（issue #10），要共用再把 @zen.cool 換成同步檔或 HTTP。
 QUOTA_GO_COOL_S="${DCQ_QUOTA_GO_COOL_S:-3600}"
 QUOTA_RPM_COOL_S="${DCQ_QUOTA_RPM_COOL_S:-120}"
-ZEN_QUOTA_COOL_S="${DCQ_ZEN_QUOTA_COOL_S:-1800}"
+ZEN_QUOTA_COOL_S="${DCQ_ZEN_QUOTA_COOL_S:-}"
 cool_quota() {  # $1=model $2=該次 .out
   local m="$1" k s
   if grep -q '^dc: 額度窗口＝每分鐘' "$2" 2>/dev/null; then k="$(fk "$m")"; s=$QUOTA_RPM_COOL_S
   else case "$m" in
     */*) k="$(fk "$m")"
          case "$m" in google/*) s=$(to_midnight America/Los_Angeles) ;; opencode-go/*) s=$QUOTA_GO_COOL_S ;; *) s=$UPSTREAM_COOL_S ;; esac ;;
-    *) k=@zen; s=$ZEN_QUOTA_COOL_S ;;
+    *) k=@zen; s=${ZEN_QUOTA_COOL_S:-$(to_midnight UTC)} ;;
   esac; fi
   echo $(( $(now) + s )) > "$Q/.health/$k.cool"; rm -rf "$Q/.health/$(fk "$m").fails"
   echo "dcq: 冷卻 $([ "$k" = @zen ] && echo 'Zen 免費池（整個 provider）' || echo "$m") —— 額度用完，${s}s 內不派" >&2

@@ -172,5 +172,16 @@ printf '%s\n' "$out" | grep -q '^mid 不派：x/or$' || { echo "FAIL easy-only: 
 # DCQ_GOFREE_MAIN=0 → Go 免費留在兜底層
 tailx="$(env -u DCQ_POOL_ZEN -u DCQ_POOL_TAIL DCQ_GOFREE_MAIN=0 DCQ_RANK_PRIOR_K=2 DCQ_CATALOG="$CAT2" DCQ_MODELS= DCQ_POOL_GO="" DCQ_POOL_PAID="" dcq rank | sed -n 's/^兜底層：//p')"
 [ "$tailx" = "opencode-go/gb-free x/or" ] || { echo "FAIL GOFREE_MAIN=0: got [$tailx]"; fail=1; }
+# 11) 全池故障不記單隻的帳（10-27）：同 10 分鐘有 ≥3 隻別的模型 quota／upstream／卡住，這次卡住當上游故障。
+# 實例 10-25 03:58–05:13 Zen 全 quota、Go 訂閱全掛，opencode-go/beam-free 那段卡 8 次 → mid 停滯 80% 被降懲罰層。
+#   hh：2 過＋8 卡，每次卡都撞全池故障 → 不降級；kk：同樣 2 過＋8 卡但單獨卡 → 照樣降級
+: > "$G"; : > "$P"; dy="$(date +%F)"
+for h in 01 02 03 04 05 06 07 08; do
+  printf '%s_%s:00:00\thh\t200\t143\tstall\t300\n%s_%s:30:00\tkk\t200\t143\tstall\t300\n' "$dy" "$h" "$dy" "$h" >> "$G"
+  for q in q1 q2 q3; do printf '%s_%s:01:00\t%s\t1\t1\tquota\t5\n' "$dy" "$h" "$q" >> "$G"; done
+done
+for m in hh hh kk kk; do rowd "$m" 0 60; done
+pen="$(DCQ_MODELS= DCQ_POOL_ZEN="hh kk" DCQ_POOL_GO="" dcq rank | sed -n 's/^懲罰層（免費層之後）：//p')"
+[ "$pen" = "kk" ] || { echo "FAIL outage stall: got pen [$pen] want [kk]"; fail=1; }
 [ "$fail" = 0 ] && echo PASS
 exit "$fail"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 額度／上游錯誤不記模型的帳（issue #8）、Zen 額度整池短冷卻 30 分（#10，10-26 改）、Google 冷卻到太平洋午夜（#11）、
+# 額度／上游錯誤不記模型的帳（issue #8）、Zen 額度整池冷卻到 08:00（UTC 午夜，10-27 改回）、Google 冷卻到太平洋午夜（#11）、
 # 免費池剔出要看得到（#9）、OmniRoute 連不到就剔出（#12）。
 set -u
 . "$(dirname "$0")/env.sh"
@@ -43,7 +43,7 @@ add j1 w1; run "zen-a zen-b opencode-go/live-free"
 ck "j1 PASS" 'ls "$DCQ_HOME/done" | grep -q -- -j1.job'
 ck "zen-a 記 why=quota" '[ "$(why zen-a)" = quota ]'
 ck "Zen 整池冷卻（zen-b 沒被試）" '[ "$(tried j1 zen-b)" = 0 ]'
-l=$(left @zen); ck "@zen 只短冷卻 30 分（${l}s），不冷到 UTC 午夜" '[ "$l" -gt 1700 ] && [ "$l" -le 1800 ]'
+l=$(left @zen); m=$(( 86400 - $(TZ=UTC date +%s) % 86400 )); ck "@zen 冷卻到 UTC 午夜＝台北 08:00（${l}s／${m}s）" '[ "$l" -gt $(( m - 60 )) ] && [ "$l" -le $(( m + 5 )) ]'
 ck "zen-a 不記 fail 計數" '[ ! -e "$H/zen-a.fails" ]'
 
 # 2. Google：RPD 冷卻該模型到太平洋午夜；RPM 只冷 QUOTA_RPM_COOL_S；限流記 upstream；普通 rc=1 照記 exit
