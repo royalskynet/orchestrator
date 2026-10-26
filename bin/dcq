@@ -1504,6 +1504,8 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
 
 ■ 免費分兩層，絕不混排（全部都由 opencode run 當外殼執行）
   1 opencode free：OpenCode 自家的非訂閱免費模型——Zen（dc_id 無斜線，如 big-pickle）＋opencode-go/*-free。
+    ‼ 鐵則：這層只准經 opencode CLI（opencode run／dc／dcq）呼叫，禁止任何 API 直打推論端點；
+      測可用性只用 opencode run 跑一次，API 沒回應不准判失效、不准反覆探測（會被判濫用鎖 IP）。
   2 freepool：非 opencode 體系的免費直連——kilo/、openrouter/*:free、google/、nvidia/、groq/。
   1 整層輪 DCQ_FREE_ROUNDS（預設 2）輪都敗、或全在冷卻，才換 2；2 也一樣輪完才往下。
   層內順序：autorank 依 logs/gaps.tsv 的「每 PASS 秒數＋貝氏平滑」排（dcq rank 看），樣本不足的照清冊列序。

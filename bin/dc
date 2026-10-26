@@ -424,6 +424,10 @@ case "${DC_OC_V2:-}" in 0) oc_v2=0 ;; 1) oc_v2=1 ;; *) if opencode run --help 2>
 if [ "$oc_v2" = 0 ]; then ocflags=(--pure --log-level ERROR --dir "$d"); else ocflags=(--standalone --log-level error); fi
 # claude/* 改叫同目錄的 claude-exec（吃同一組參數，opencode 專屬旗標忽略）
 case "$m" in claude/*) ocrun=("$(dirname "$(readlink -f "$0")")/claude-exec") ;; *) ocrun=(opencode run) ;; esac
+# 鐵則（2026-10-26 使用者定）：opencode free 層（Zen 無斜線／opencode/*、opencode-go/*-free）只准經 opencode CLI 呼叫，
+# 禁止 API 直打（Zen 免費閘認 opencode 客戶端，直打會被判濫用鎖 IP）。以後誰改執行器都要先過這道閘；test/oc_cli_only_test.sh 守。
+case "$m" in */*) case "$m" in opencode/*|opencode-go/*-free) ocfree=1 ;; *) ocfree=0 ;; esac ;; *) ocfree=1 ;; esac
+[ "$ocfree" = 1 ] && [ "${ocrun[*]}" != "opencode run" ] && { echo "dc: 中止——opencode free 模型只准經 opencode CLI 呼叫（${m}），禁止 API" >&2; exit 2; }
 { cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" "${ocrun[@]}" \
   "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。

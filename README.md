@@ -124,6 +124,8 @@ which dc dcq wo-verify deep-lint opencode jq
 
 `dcq help` 印整體觀念（派法 o／of／os／deep、層級順序、免費兩層（opencode free → freepool）與 freepool 閘、正規流程、每日維護）再接指令用法。
 
+**鐵則：opencode free 層（Zen 免費、opencode-go/*-free）只准經 opencode CLI（`opencode run`／`dc`／`dcq`）呼叫，禁止任何 API 直打推論端點。** `dc` 有閘、`test/oc_cli_only_test.sh` 掃程式碼守這條。
+
 ```bash
 dc <task.md> [cwd] [-- <opencode run 原生旗標>...]
 ```

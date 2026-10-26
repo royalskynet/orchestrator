@@ -12,7 +12,7 @@
 # dc_id：dcq 派工時給 dc 的模型名（空＝dcq 不用）。沒有斜線＝Zen（opencode/ 前綴省略）；opencode-go/、omniroute/、openrouter/、nvidia/、groq/、kilo/（直連）照寫。
 # fit：any＝任何難度都派；easy＝只派 easy／mid 工單（改錯、假扮工具、無限迴圈、隨機分配的前科），hard 工單跳過；
 #      easy-only＝只派 easy 工單，mid／hard 都跳過（失敗白等時間遠大於通過價值的）。
-# 列的先後＝同層手排順序（dcq autorank 會依實績重排）。dcq 組池：免費分兩層不混排（2026-10-26）：free 無斜線＋opencode-go/*-free＝opencode free 層（先），直連 free（google/ kilo/ nvidia/ groq/ openrouter/）＝freepool 層（後）、free omniroute/＝兜底層（本機已空）、sub＝訂閱層、api＝API 層（DCQ_ALLOW_API=1 才用）。
+# 列的先後＝同層手排順序（dcq autorank 會依實績重排）。dcq 組池：免費分兩層不混排（2026-10-26）：free 無斜線＋opencode-go/*-free＝opencode free 層（先；只准經 opencode CLI 呼叫，禁止 API 直打），直連 free（google/ kilo/ nvidia/ groq/ openrouter/）＝freepool 層（後）、free omniroute/＝兜底層（本機已空）、sub＝訂閱層、api＝API 層（DCQ_ALLOW_API=1 才用）。
 # 免費層內 0 PASS 的進冷宮（兜底層之後、訂閱層之前），停滯率高的進懲罰層（免費層之後）。
 free	opencode-run	opencode/minimax-m3.1-flash-free	removed	gaps 10-22 PASS（30 跑 17 過）	Zen 免費；原名 space-bunny-free（@opencode 10-19「Space Bunny was MiniMax M3.1 Flash」）；10-19 06:00 起整池 403 abusive traffic；10-23 自動移出（Zen /models 加掃：上游無）		any
 free	opencode-run	opencode/deepseek-v4.1-flash-free	ok	gaps 10-22 PASS（10 跑 2 過）	Zen 免費	deepseek-v4.1-flash-free	any
