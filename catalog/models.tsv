@@ -3,14 +3,16 @@
 # 欄位：billing<TAB>route<TAB>model<TAB>status<TAB>evidence<TAB>note<TAB>dc_id<TAB>fit
 # billing：free＝免費、sub＝付費訂閱（月費內含額度）、api＝付費 API（按量扣錢）
 # route：怎麼叫得到。opencode-run＝只能經 opencode CLI（opencode run／dc／dcq），API 直打不回應不代表壞（fixindex 11041）；
-#        omniroute＝本機 OmniRoute :20128 HTTP；codex／claude-code／gemini-cli＝各自 CLI；local＝本機推理
+#        omniroute＝經 OmniRoute HTTP（2026-10-26 起本機全部退役，只留歷史列；dcq 不再派任何 omniroute/*）；
+#        codex／claude-code／gemini-cli＝各自 CLI；local＝本機推理
 # status：ok＝7 天內有實際成功紀錄；gated＝目前被 Zen 共用閘封鎖（IP 判濫用，閘外會回來；現況看 ~/.dcq/.zen-gate）；flaky＝成功率低；unverified＝本機沒有成功紀錄
 #        status 是人看的註記，dcq 排序只看 gaps.tsv 實績，不讀這欄（2026-10-22 重設：Zen 10-21 起已在閘外實跑）
-# evidence：probe＝~/.dcq/logs/probe.tsv（opencode run 每日探測）；calllog＝OmniRoute call_logs 7 天 成功/總數；auth＝CLI 登入狀態
+# evidence：probe＝~/.dcq/logs/probe.tsv（opencode run 每日探測）；calllog＝OmniRoute call_logs 7 天 成功/總數（歷史）；auth＝CLI 登入狀態
+# billing=free 的 kilo/、openrouter/ 列由 freepool 看上游價格目錄現場驗（bin/freepool guard），不靠這欄的人工註記；漲價或缺 :free 後綴 dc 直接不派。
 # dc_id：dcq 派工時給 dc 的模型名（空＝dcq 不用）。沒有斜線＝Zen（opencode/ 前綴省略）；opencode-go/、omniroute/、openrouter/、nvidia/、groq/、kilo/（直連）照寫。
 # fit：any＝任何難度都派；easy＝只派 easy／mid 工單（改錯、假扮工具、無限迴圈、隨機分配的前科），hard 工單跳過；
 #      easy-only＝只派 easy 工單，mid／hard 都跳過（失敗白等時間遠大於通過價值的）。
-# 列的先後＝同層手排順序（dcq autorank 會依實績重排）。dcq 組池：free 無斜線與 opencode-go/*-free＝免費層（2026-10-22 起 Go 免費併入，DCQ_GOFREE_MAIN=0 關）、free omniroute/＝兜底層、sub＝訂閱層、api＝API 層（DCQ_ALLOW_API=1 才用）。
+# 列的先後＝同層手排順序（dcq autorank 會依實績重排）。dcq 組池：free 無斜線、opencode-go/*-free 與直連 free（google/ kilo/ nvidia/ groq/ openrouter/）＝免費層（2026-10-22 起 Go 免費併入，DCQ_GOFREE_MAIN=0 關）、free omniroute/＝兜底層（本機已空）、sub＝訂閱層、api＝API 層（DCQ_ALLOW_API=1 才用）。
 # 免費層內 0 PASS 的進冷宮（兜底層之後、訂閱層之前），停滯率高的進懲罰層（免費層之後）。
 free	opencode-run	opencode/minimax-m3.1-flash-free	removed	gaps 10-22 PASS（30 跑 17 過）	Zen 免費；原名 space-bunny-free（@opencode 10-19「Space Bunny was MiniMax M3.1 Flash」）；10-19 06:00 起整池 403 abusive traffic；10-23 自動移出（Zen /models 加掃：上游無）		any
 free	opencode-run	opencode/deepseek-v4.1-flash-free	ok	gaps 10-22 PASS（10 跑 2 過）	Zen 免費	deepseek-v4.1-flash-free	any
@@ -29,8 +31,8 @@ free	opencode-run	opencode-go/beam-free	ok	gaps 12 跑 8 過，中位 71s（10-2
 free	opencode-run	opencode-go/minimax-m3.1-flash-free	removed	手動補同步 10-21	Go 免費；自動新增，尚無實測；10-23 自動移出（go-sync 週掃：上游無）		any
 free	opencode-run	opencode-go/cat-jam-free	removed	calllog 1/1	Go 免費；樣本少；10-21 自動移出（手動補同步：上游無）		any
 free	omniroute	go-free（combo）	removed	10-20 實打回 longcat-2.5-preview-free	OmniRoute HTTP combo：opencode-go longcat／beam／minimax-m3.1-flash-free＋nim-pool，全免費（10-20 查 combos 表）；chain-a＝go-free→or-free→go-sub，尾棒付費不接；10-20 23:22 經 dc 實跑 OmniRoute 回 Unable to determine provider for model go-free（/v1/models 有列但 combo 路由不通），Go *-free 已直接進兜底層；10-20 使用者刪除 OmniRoute 內全部 OC 模型，combo 已不存在		any
-free	omniroute	nim-pool（combo）	ok	10-20 chain-a 實打回 openai/gpt-oss-20b	OmniRoute HTTP combo：NVIDIA NIM gpt-oss-20b→nemotron-super（round-robin 兩 key）→glm-5.3-flash→ultra，全免費；非 OC 免費主路，排在 Go *-free 之後、or-free 之前	omniroute/nim-pool	any
-free	omniroute	openrouter/free	ok	gaps 23 跑 1 過，失敗白等 11262s（10-20）	OpenRouter 免費池隨機分配（or-free combo）；:free 20 RPM	omniroute/or-free	easy-only
+free	omniroute	nim-pool（combo）	removed	10-20 chain-a 實打回 openai/gpt-oss-20b	OmniRoute HTTP combo：NVIDIA NIM gpt-oss-20b→nemotron-super（round-robin 兩 key）→glm-5.3-flash→ultra，全免費；非 OC 免費主路，排在 Go *-free 之後、or-free 之前；10-26 退役：NIM 六隻已直連（nvidia/*），這條 OmniRoute combo 是多餘的一跳，本機不再依賴 OmniRoute		any
+free	omniroute	openrouter/free	removed	gaps 23 跑 1 過，失敗白等 11262s（10-20）	OpenRouter 免費池隨機分配（or-free combo）；:free 20 RPM；10-26 退役：改用 kilo/kilo-auto/free（免 key 零價智慧路由，freepool 驗證現價），本機不再依賴 OmniRoute		easy-only
 free	omniroute	openrouter/*:free（17 個）	unverified	OpenRouter /models 10-19	nemotron-3 ultra/super、gemma-4、inkling、laguna 等；個別直點未測		any
 free	omniroute	nvidia/openai/gpt-oss-20b	flaky	calllog 6/16	NVIDIA NIM 免費；失敗多為佇列逾時 45s		any
 free	omniroute	nvidia/nvidia/nemotron-3-super-120b-a12b	flaky	calllog 4/14	NVIDIA NIM 免費		any
@@ -64,17 +66,24 @@ free	opencode-run	kilo/recursive/flint-v1.0:free	ok	curl tool_call OK 0.7s（10-
 free	opencode-run	kilo/poolside/laguna-xs-2.1:free	ok	curl tool_call OK 0.9s（10-24）	Kilo 免 key；上游 Poolside 忙時 429；10-24 加，依能力手排，之後交 autorank	kilo/poolside/laguna-xs-2.1:free	any
 free	opencode-run	google/gemini-3.8-flash	ok	curl tool_call OK 但單次 65s（10-24）	AI Studio 免費層；單次回應慢，交 autorank 判；10-24 加，依能力手排，之後交 autorank	google/gemini-3.8-flash	any
 free	opencode-run	google/gemini-3.7-flash	ok	curl tool_call OK 但單次 110s（10-24）	AI Studio 免費層；單次回應慢，交 autorank 判；10-24 加，依能力手排，之後交 autorank	google/gemini-3.7-flash	any
+free	opencode-run	kilo/kilo-auto/free	ok	oc-free-check OK 3.5s（10-26）；freepool probe（OmniRoute test-all）OK（10-26）	Kilo 免 key 的零價智慧路由（pricing 0/0，freepool 驗證）；取代 omniroute/or-free，本機免費編排不再經 OmniRoute。它自己在免費成員裡挑，個別成員不可控，故先 easy	kilo/kilo-auto/free	easy
+free	opencode-run	kilo/nvidia/nemotron-3.5-lightning:free	ok	oc-free-check OK 3.4s（10-26）；freepool probe（OmniRoute test-all）OK（10-26）	Kilo 免 key；Zen 同款 nemotron-3.5-lightning-free 常 flaky，故 easy；10-26 freepool propose 加	kilo/nvidia/nemotron-3.5-lightning:free	easy
+free	opencode-run	kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free	ok	oc-free-check OK 3.3s（10-26）；freepool probe（OmniRoute test-all）OK（10-26）	Kilo 免 key；30B nano reasoning，小模型故 easy；10-26 freepool propose 加	kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free	easy
+free	opencode-run	kilo/reflection/beam-free	ok	oc-free-check OK 2.3s（10-26）；freepool probe（OmniRoute test-all）OK（10-26）	Kilo 免 key；Zen 有同款 beam-free（1M 上下文）；10-26 freepool propose 加	kilo/reflection/beam-free	any
+free	opencode-run	kilo/xingchen-agi/xing4.0-29b-a4b:free	ok	oc-free-check OK 2.3s（10-26）	Kilo 免 key；29B A4B，小模型故 easy；10-26 freepool propose 加	kilo/xingchen-agi/xing4.0-29b-a4b:free	easy
+free	opencode-run	kilo/stealth/glyph-cluster	ok	oc-free-check OK 4.6s（10-26）；freepool probe 200 空內容（10-26，疑 reasoning 吃光 token，fix 9997；待真實派工驗）	Kilo 免 key；stealth 模型（來源未公開、可能被上游收走對話），零價期間才可用，故 easy；10-26 freepool propose 加	kilo/stealth/glyph-cluster	easy
+free	opencode-run	kilo/openrouter/free	ok	oc-free-check OK 3.5s（10-26）；freepool probe（OmniRoute test-all）OK（10-26）	OpenRouter 免費池隨機分配，等於原 omniroute/or-free 的替代直連版；or-free 實績 23 跑 1 過故 easy-only；10-26 加	kilo/openrouter/free	easy-only
 free	gemini-cli	gemini（AI Studio key）	unverified	settings 有 API key	免費層額度官方不再公布，看 AI Studio；本機沒有成功紀錄		any
 sub	claude-code	claude-fable-5-1／claude-opus-5-5／claude-sonnet-5-5／claude-haiku-5-5	ok	auth claude.ai pro	本 session 即是；子 agent 用 Agent 工具 model 參數		any
 sub	claude-code	claude-haiku-5-5	ok	claude -p 10-25 寫檔＋bash OK 4s（apiKeySource=none）	dcq Claude 層：bin/claude-exec，只在 DCQ_ORDER=sub（派os）最後兜底	claude/claude-haiku-5-5	any
 sub	codex	gpt-6.1-sol（預設）／gpt-6-sol／gpt-6-luna／gpt-6-astra	ok	auth ChatGPT	codex exec；codex 只接專屬執行位		any
-sub	omniroute	opencode-go/glm-5.3-flash	ok	calllog 3/3	Go 訂閱；實測 12s	opencode-go/glm-5.3-flash	any
-sub	omniroute	opencode-go/deepseek-v4.1-flash	ok	calllog 30/30	Go 訂閱；20s	opencode-go/deepseek-v4.1-flash	any
-sub	omniroute	opencode-go/deepseek-v4-pro	unverified	Go 上游清單	Go 訂閱；24s（10-03 單測）	opencode-go/deepseek-v4-pro	any
-sub	omniroute	opencode-go/minimax-m3	unverified	Go 上游清單	Go 訂閱；27s	opencode-go/minimax-m3	any
-sub	omniroute	opencode-go/qwen3.8-flash	unverified	Go 上游清單	Go 訂閱；28s	opencode-go/qwen3.8-flash	any
-sub	omniroute	opencode-go/kimi-k2.7-code	unverified	Go 上游清單	Go 訂閱	opencode-go/kimi-k2.7-code	any
-sub	omniroute	opencode-go/glm-5.3	unverified	Go 上游清單	Go 訂閱	opencode-go/glm-5.3	any
+sub	opencode-run	opencode-go/glm-5.3-flash	ok	calllog 3/3	Go 訂閱；實測 12s	opencode-go/glm-5.3-flash	any
+sub	opencode-run	opencode-go/deepseek-v4.1-flash	ok	calllog 30/30	Go 訂閱；20s	opencode-go/deepseek-v4.1-flash	any
+sub	opencode-run	opencode-go/deepseek-v4-pro	unverified	Go 上游清單	Go 訂閱；24s（10-03 單測）	opencode-go/deepseek-v4-pro	any
+sub	opencode-run	opencode-go/minimax-m3	unverified	Go 上游清單	Go 訂閱；27s	opencode-go/minimax-m3	any
+sub	opencode-run	opencode-go/qwen3.8-flash	unverified	Go 上游清單	Go 訂閱；28s	opencode-go/qwen3.8-flash	any
+sub	opencode-run	opencode-go/kimi-k2.7-code	unverified	Go 上游清單	Go 訂閱	opencode-go/kimi-k2.7-code	any
+sub	opencode-run	opencode-go/glm-5.3	unverified	Go 上游清單	Go 訂閱	opencode-go/glm-5.3	any
 sub	opencode-run	opencode-go/gemini-4-argon-contributor	ok	run 10-21 ok 7s	Go 訂閱；自動新增；10-21 opencode run 實打 1 次回 ok	opencode-go/gemini-4-argon-contributor	any
 sub	opencode-run	opencode-go/step-5-preview	ok	run 10-21 ok 3s	Go 訂閱；自動新增；10-21 opencode run 實打 1 次回 ok	opencode-go/step-5-preview	any
 sub	opencode-run	opencode-go/minimax-m3.1-flash	ok	go-sync 週掃 10-23	Go 訂閱；自動新增，尚無實測	opencode-go/minimax-m3.1-flash	any

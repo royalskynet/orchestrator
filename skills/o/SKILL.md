@@ -1,6 +1,6 @@
 ---
 name: o
-description: Orchestrator：把工單派給本機已知的各種 LLM（Zen 免費、opencode-go 訂閱、OmniRoute 轉接的 NIM／OpenRouter 等、付費 API）當執行人，依實測通過率與耗時智慧加權排序、多層 fallback；opencode CLI 當 agent 外殼，完工由 wo-verify 機械判定，exit code 反映驗收結果而非模型自述；多張工單用 dcq 併發跑（cwd 互斥、per-model 冷卻、停滯 watchdog），非免費模型發 TG 警示。說「派o」「派 o」「派工」時用；「派of」＝只用免費層、「派os」＝訂閱優先（底層指令是 dc／dcq；舊稱派dr／派drf／派drs 同義）；說「派deep」走 deepclaude 的 deep skill，不是這裡。需要沙箱外寫入、GH_TOKEN 或獨立 config 的由主 session 直接做，需 agent 多步自主時改派deep。
+description: Orchestrator：把工單派給本機已知的各種 LLM（Zen 免費、opencode-go 訂閱、直連免費的 Kilo／NIM／Groq／Google AI Studio、付費 API）當執行人，依實測通過率與耗時智慧加權排序、多層 fallback；opencode CLI 當 agent 外殼，完工由 wo-verify 機械判定，exit code 反映驗收結果而非模型自述；多張工單用 dcq 併發跑（cwd 互斥、per-model 冷卻、停滯 watchdog），非免費模型發 TG 警示。說「派o」「派 o」「派工」時用；「派of」＝只用免費層、「派os」＝訂閱優先（底層指令是 dc／dcq；舊稱派dr／派drf／派drs 同義）；說「派deep」走 deepclaude 的 deep skill，不是這裡。需要沙箱外寫入、GH_TOKEN 或獨立 config 的由主 session 直接做，需 agent 多步自主時改派deep。
 ---
 
 # Orchestrator（dc／dcq）＝多 LLM 執行人調度（免費優先、訂閱墊底），完成定義＝wo-verify 通過
@@ -45,7 +45,7 @@ dc <task.md> [cwd] [-- <opencode run 原生旗標>...]
 ```
 
 - 任務檔路徑必須**絕對**。
-- 模型**計費分級不擋**：free／sub（訂閱額度）／metered（按量或沒查過的組合），非 free 照派，每筆記 `billing.tsv`，TG 10 分鐘最多一則（`DC_TG_EVERY`）。別家組合名帶 `-free` 不算 free，查過成員的只有 `omniroute/free-tools`。
+- 模型**計費分級不擋**：free／sub（訂閱額度）／metered（按量或沒查過的組合），非 free 照派，每筆記 `billing.tsv`，TG 10 分鐘最多一則（`DC_TG_EVERY`）。別家組合名帶 `-free` 不算 free。`kilo/*`、`openrouter/*` 由 `bin/freepool` 讀上游價格目錄現場判定：現價非零或 id 缺 `:free` 後綴（會打到同名付費版）就 rc=1 不派，dcq 冷卻換下一隻；`DC_FREEPOOL=off` 跳過。
 - 未指定模型時釘死 `space-bunny-free`，不吃 opencode config 的 per-agent 付費 model。
 - **停止免費就終止並跳警報**：派工前 `bin/freecheck` 查 `/zen/go/v1/usage`，任一額度窗 `status != ok`，或要用的 Go 免費模型從 `/models` 消失 → 寫 `~/.dcq/.ALARM`＋`hpush` 推播，`dc` rc=2 中止、`dcq` 全隊停止收單。名字有 `-free` 不代表還免費（Go 的免費是限時的），額度才是事實（`percent > 0` 只 WARN 不停：付費層和別處用 Go 都會讓它上升）。誤報就 `DC_FREECHECK=off`，或刪掉 `.ALARM`。
 - `--agent <name>` 可指定 opencode agent（控制工具權限），但模型仍由 dc 釘死。

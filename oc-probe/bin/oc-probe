@@ -42,10 +42,31 @@ hook() {
   "$h" || echo "oc-probe: hook 失敗（rc=$?）"
 }
 
+# 免費名單雷達（零 token，不實打模型）：讀 kilo／openrouter 的公開價格目錄判「此刻零價」。
+# 免費是動態的——模型會被下架，也會悄悄變成收費。所以 scan 之後一定跑 guard：
+# 清冊還掛著 billing=free 但上游已漲價（或 id 缺 :free 後綴會打到付費版）就發警示，因為那是會扣錢的。
+freepool_scan() {
+  local FP="$HERE/../../bin/freepool" out rc=0
+  [ -x "$FP" ] || return 0
+  out="$("$FP" scan 2>&1)"; rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" = 0 ] || { echo "oc-probe: freepool scan 失敗（rc=$rc）"; return 1; }
+  out="$("$FP" guard "$HERE/../../catalog/models.tsv" 2>&1)"; rc=$?
+  printf '%s\n' "$out"
+  if [ "$rc" != 0 ]; then
+    local msg="⚠️ freepool：清冊有 billing=free 的模型在上游已不是零價（照派會扣錢）
+${out}"
+    { [ "${DC_PUSH:-}" = 1 ] || [ "$LOGD" = "$HOME/.dcq/logs" ]; } && command -v hpush >/dev/null && hpush "$msg" >/dev/null 2>&1
+    return 1
+  fi
+  return 0
+}
+
 daily() {
   local rc=0
   "$DCQ" rescan || { echo "oc-probe: dcq rescan 失敗"; rc=1; }
   "$HERE/go-sync" || { echo "oc-probe: go-sync 失敗"; rc=1; }
+  freepool_scan || rc=1
   hook
   return $rc
 }
