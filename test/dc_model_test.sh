@@ -47,6 +47,9 @@ chk "Zen 按量照派＋警示 metered"            "$(try DC_FREE_MODEL=opencode
 # *-free 只在 opencode 系算數：別家組合名帶 -free 不代表成員全免費
 chk "omniroute 其他組合(名字帶 -free)要警示" "$(try DC_FREE_MODEL=omniroute/auto/best-free)" ran:metered
 chk "陌生 provider 帶 -free 要警示"         "$(try DC_FREE_MODEL=openrouter/x-free)" ran:metered
+# DC_FREE_EXTRA 列完整 id 對任何 provider 都算 free（遠端 OmniRoute combo 成員，如 Grok 端）；沒列的照舊警示
+chk "DC_FREE_EXTRA 完整 id 不吵"            "$(try DC_FREE_EXTRA='omniroute/x omniroute/gemini/g-flash' DC_FREE_MODEL=omniroute/gemini/g-flash)" ran:-
+chk "DC_FREE_EXTRA 沒列到的仍警示"          "$(try DC_FREE_EXTRA='omniroute/gemini/g-flash' DC_FREE_MODEL=omniroute/gemini/g-pro)" ran:metered
 # 帳目錄是暫存路徑（非 ~/.dcq）且沒 DC_PUSH=1：不推播（測試、手動試跑不發真 TG，10-21）
 chk "暫存帳目錄不推播"                      "$(try DC_PUSH= DC_FREE_MODEL=opencode/kimi-k3)" ran:-
 : > "$TRACE"; : > "$PUSH"; "$DC" "$T/t.md" "$T/w" -- -m opencode/kimi-k3 >/dev/null 2>&1; sleep 0.3

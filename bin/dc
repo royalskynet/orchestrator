@@ -44,6 +44,8 @@ tier() {
   # 寫死的 glob 兩頭都漏：接不到新的零價模型（kilo-auto/free、stealth/*、reflection/beam-free），
   # 也擋不住同一個 id 漲價。沒判定（其他 provider、或 freepool-guard 關掉）才往下走 glob。
   case "${DC_FP_VERDICT:-}" in free) echo free; return ;; paid) echo metered; return ;; esac
+  # DC_FREE_EXTRA 列的完整 id 不分 provider 都算 free（例：遠端 OmniRoute combo 成員已逐一查過）
+  for e in ${DC_FREE_EXTRA:-}; do [ "$e" = "$1" ] && { echo free; return; }; done
   case "$1" in
     # 成員 big-pickle→agnes→openrouter/free 全免費（2026-10-02 查 omniroute combos 表；
     # nim-pool 卡死已移出；建置見 fix 0432）。組合改了要重查。
