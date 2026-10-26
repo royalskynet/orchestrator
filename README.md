@@ -155,7 +155,7 @@ opencode 對串流停滯的等待上限是 provider 的 `chunkTimeout`。5 分�
 該 provider 沒設或設 > 180000 就 WARN。只出聲不擋：那是使用者的 config，`dc` 無權改。
 建議在 `opencode.json` 設 `provider.<p>.options.chunkTimeout: 120000`。
 
-**訂了 Go 之後**：`opencode-go/` provider 其實存在（29 個模型），只是本機 `opencode.json` 的 `enabled_providers` 白名單沒列它所以看不到。dc 遇到 `opencode-go/` 模型會用 `OPENCODE_CONFIG_CONTENT` 臨時把它加進白名單，不動使用者的 config；key 沿用 `opencode` 的憑證。免費的 `longcat`／`space-bunny` 掛在 `opencode/` 底下也能跑，兩條路都通（2026-10-02 實測）。
+**訂了 Go 之後**：`opencode-go/` provider 只要 env 有 `OPENCODE_API_KEY` 就出現；dc 遇到 `opencode-go/` 模型會從 `auth.json` 的 `opencode` 憑證補上這個 env。本機 `opencode.json` 用 `disabled_providers` 黑名單擋付費 provider，不要用 `enabled_providers` 白名單：v2 下 env 注入的白名單蓋不過檔案層，Go 會消失（2026-10-27 起 dc 不再注入，fix 11477）。免費的 `longcat`／`space-bunny` 掛在 `opencode/` 底下也能跑，兩條路都通（2026-10-02 實測）。
 
 ## Go lane 的 HTTP endpoint（`dc`／`dcq` 不走，但值得知道）
 

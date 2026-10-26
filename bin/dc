@@ -241,12 +241,10 @@ if [ "$t" != free ]; then
   fi
 fi
 
-# opencode-go 要兩樣東西才會出現：本機 opencode.json 的 enabled_providers 有列它、
-# 以及 env 的 OPENCODE_API_KEY（它不沿用 auth.json 裡 opencode 的憑證，2026-10-02 實測）。
-# 只在這次呼叫臨時注入，不改使用者的 config —— 改了的話所有工具都會看到付費模型。
+# opencode-go 要 env 的 OPENCODE_API_KEY 才會出現（它不沿用 auth.json 裡 opencode 的憑證，2026-10-02 實測）。
+# 不再臨時注入 enabled_providers 白名單：本機 opencode.json 改用 disabled_providers 黑名單（10-27），
+# 而 v2 的 env 白名單擋不過檔案層 policies（最後符合者勝、檔案層最後評估），注入反讓 Go 消失（fix 11477）。
 case "$m" in opencode-go/*)
-  ep="$(opencode debug config 2>/dev/null | jq -c '(.enabled_providers // empty) + ["opencode-go"] | unique' 2>/dev/null)"
-  [ -n "$ep" ] && export OPENCODE_CONFIG_CONTENT="{\"enabled_providers\":${ep}}"
   [ -n "${OPENCODE_API_KEY:-}" ] || OPENCODE_API_KEY="$(jq -r '.opencode.key // empty' "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json" 2>/dev/null)"
   export OPENCODE_API_KEY
   [ -n "$OPENCODE_API_KEY" ] || { echo "dc: opencode-go 需要 OPENCODE_API_KEY，auth.json 也沒有 opencode 憑證" >&2; exit 2; }
@@ -261,7 +259,7 @@ export OPENCODE_DISABLE_CLAUDE_CODE=1
 # 300s ≈ 164s×1.8。dcq watchdog 在工具跑時暫停 stall／spin，暫停時間的上限就是這個值。
 export OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS="${OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS:-300000}"
 _cc="${OPENCODE_CONFIG_CONTENT:-}"; [ -n "$_cc" ] || _cc='{}'
-# 用 jq 深度合併（*）而不是整份覆蓋：opencode-go 分支剛設進來的 enabled_providers 不能被蓋掉。
+# 用 jq 深度合併（*）而不是整份覆蓋：呼叫端自己帶的 OPENCODE_CONFIG_CONTENT 不能被蓋掉。
 _cc="$(printf '%s' "$_cc" | jq -c --arg f "$(dirname "$(dirname "$(readlink -f "$0")")")/executor-rules.md" '. * {permission:{skill:"deny"}, instructions:[$f]}' 2>/dev/null)"
 [ -n "$_cc" ] || { echo "dc: OPENCODE_CONFIG_CONTENT 不是合法 JSON，無法合併 permission.skill=deny 與 executor-rules.md" >&2; exit 2; }
 export OPENCODE_CONFIG_CONTENT="$_cc"

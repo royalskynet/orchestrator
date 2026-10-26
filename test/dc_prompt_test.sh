@@ -7,6 +7,7 @@ set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DC="$REPO/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+export DEBUG_MARK="$T/debug.mark"
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"   # 不讀真的全域閘（10-19：Jev 閘封鎖時這些測試全掛）
 mkdir -p "$T/bin" "$T/w" "$T/cfg"
 export DC_BIN="$T/bin" PATH="$T/bin:$PATH"
@@ -19,8 +20,8 @@ export TRACE="$T/trace"
 
 cat > "$T/bin/opencode" <<'X'
 #!/usr/bin/env bash
-# debug config：Go 分支要讀 enabled_providers 算聯集，所以不能回 {}
-if [ "$1" = debug ]; then echo '{"enabled_providers":["opencode"]}'; exit 0; fi
+# Go 分支不准再呼叫 debug config 注入白名單（10-27 改黑名單）；被叫就留痕
+if [ "$1" = debug ]; then echo called >> "${DEBUG_MARK:?}"; echo '{"enabled_providers":["opencode"]}'; exit 0; fi
 {
   echo "RUN"
   echo "DISABLE=${OPENCODE_DISABLE_CLAUDE_CODE-<unset>}"
@@ -53,11 +54,12 @@ chk "bash 工具逾時注入 300s" "$(field BASHTO)" "300000"
 run DC_FREE_MODEL=opencode/longcat-2.5-preview-free OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS=1234
 chk "呼叫端設的 bash 逾時保留" "$(field BASHTO)" "1234"
 
-# Go 分支：dc 自己設了 enabled_providers，合併必須是深合併，兩邊都要活著
+# Go 分支：不再注入 enabled_providers 白名單（v2 會讓 Go 消失，fix 11477），也不呼叫 debug config
+rm -f "$DEBUG_MARK"
 run DC_FREE_MODEL=opencode-go/space-bunny-free
 core "Go"
-chk "Go 的 enabled_providers 沒被蓋掉" \
-  "$(field CONFIG | jq -r '(.enabled_providers // []) as $e | if ($e|index("opencode")) and ($e|index("opencode-go")) then "both" else "bad:\($e)" end')" "both"
+chk "Go 不注入 enabled_providers" "$(field CONFIG | jq -r 'has("enabled_providers")')" "false"
+chk "Go 不呼叫 debug config" "$([ -s "$DEBUG_MARK" ] && echo called || echo none)" "none"
 
 [ "$fail" = 0 ] && echo PASS
 exit $fail
