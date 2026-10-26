@@ -11,8 +11,8 @@ ln -sfn "$REPO/bin/dcq" ~/.local/bin/dcq
 ln -sfn "$REPO/bin/zen-gate" ~/.local/bin/zen-gate
 # PATH 上的 wo-verify 也由本 repo 提供（手動驗收、其他腳本用）；dc 自己不走 PATH
 ln -sfn "$REPO/bin/wo-verify" ~/.local/bin/wo-verify
-# freepool：免費模型雷達（讀上游價格目錄判零價）。dc 自己走 bin/ 同目錄那份，這個連結給手動 scan／guard 用
-ln -sfn "$REPO/bin/freepool" ~/.local/bin/freepool
+# freepool-guard（freepool 層的守門與補貨）：免費模型雷達（讀上游價格目錄判零價）。dc 自己走 bin/ 同目錄那份，這個連結給手動 scan／guard 用
+ln -sfn "$REPO/bin/freepool-guard" ~/.local/bin/freepool-guard
 # 週探測（oc-free-check／go-sync／launchd）是選配，在 oc-probe/，由 oc-probe/install.sh 裝；
 # dcq rank 照讀 ~/.dcq/logs/probe.tsv，沒裝就沒有探測資料。
 
@@ -25,7 +25,7 @@ ln -sfn "$REPO/skills/o" ~/.claude/skills/o
 [ -L ~/.claude/skills/dc ] && rm ~/.claude/skills/dc  # 10-16 前舊名
 
 echo "Installed symlinks:"
-for t in ~/.local/bin/dc ~/.local/bin/dcq ~/.local/bin/zen-gate ~/.local/bin/wo-verify ~/.local/bin/freepool ~/.claude/skills/o; do
+for t in ~/.local/bin/dc ~/.local/bin/dcq ~/.local/bin/zen-gate ~/.local/bin/wo-verify ~/.local/bin/freepool-guard ~/.claude/skills/o; do
   ls -l "$t"
   [ -e "$t" ] || { echo "DANGLING: $t"; exit 1; }
 done

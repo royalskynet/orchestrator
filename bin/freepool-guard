@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""freepool — 免費模型雷達：直接讀各家 provider 目錄的 pricing，判定「此刻真的零價」。
+"""freepool-guard — 免費模型雷達：直接讀各家 provider 目錄的 pricing，判定「此刻真的零價」。
 
 取代 OmniRoute 的 or-free／free-tools 組合（本機不再依賴 OmniRoute）：免費名單不再靠
 手維護的 glob 或別家路由器的組合名，而是每天讀上游目錄，用 pricing==0 現場判定。
@@ -10,15 +10,15 @@
 沒有價格端點，計費規則留在 dc 的 tier()，這裡回 unknown 不表態。
 
 指令：
-  freepool scan [--dry-run]     讀上游目錄、寫快取、印與上次的差異（零 token，不實打模型）
-  freepool status               印快取
-  freepool pool                 印此刻驗證為零價＋支援 tools 的 dc_id（一行一個）
-  freepool verify <dc_id>...    判定單一 dc_id：rc 0 全部零價、2 有付費（拒派）、3 有查不到
-  freepool guard <models.tsv>   清冊 billing=free 的 kilo／openrouter 列是否還零價；rc=1 有漲價或下架
-  freepool propose <models.tsv> 對清冊提增刪建議（只印，不改檔）
-  freepool daily <models.tsv>   每日一支（oc-probe 06:00 呼叫）：scan → guard → 對清冊還沒有、也還沒探過的
+  freepool-guard scan [--dry-run]     讀上游目錄、寫快取、印與上次的差異（零 token，不實打模型）
+  freepool-guard status               印快取
+  freepool-guard pool                 印此刻驗證為零價＋支援 tools 的 dc_id（一行一個）
+  freepool-guard verify <dc_id>...    判定單一 dc_id：rc 0 全部零價、2 有付費（拒派）、3 有查不到
+  freepool-guard guard <models.tsv>   清冊 billing=free 的 kilo／openrouter 列是否還零價；rc=1 有漲價或下架
+  freepool-guard propose <models.tsv> 對清冊提增刪建議（只印，不改檔）
+  freepool-guard daily <models.tsv>   每日一支（oc-probe 06:00 呼叫）：scan → guard → 對清冊還沒有、也還沒探過的
                                 新零價 kilo 模型 probe（每天最多 PROBE_MAX 個，結果記 FREEPOOL_PROBED 不重探）
-  freepool probe <kilo/...>...  實打可用性：交給本機 OmniRoute 的 /api/models/test-all（逐個送、
+  freepool-guard probe <kilo/...>...  實打可用性：交給本機 OmniRoute 的 /api/models/test-all（逐個送、
                                 429 連 3 次或 403 連 2 次自動停）。一次最多 PROBE_MAX 個、只收零價 id。
                                 kilo 免費額度全帳號共用，禁止自己併發打（10-26 打 22 個燒光額度）。
 
@@ -42,7 +42,7 @@ CATALOGS = {
 }
 CACHE = Path(os.environ.get("FREEPOOL_CACHE") or Path.home() / ".dcq" / "freepool.json")
 TTL_H = float(os.environ.get("FREEPOOL_TTL_H") or 24)
-UA = {"User-Agent": "freepool/1.0 (dispatch-router)", "Accept": "application/json"}
+UA = {"User-Agent": "freepool-guard/1.0 (dispatch-router)", "Accept": "application/json"}
 
 
 def now():
@@ -196,13 +196,13 @@ def cmd_scan(a):
     errs = {p: v["error"] for p, v in rep["providers"].items() if v["error"]}
     if len(errs) == len(CATALOGS):
         for p, e in errs.items():
-            print(f"freepool: {p} 目錄讀不到：{e}", file=sys.stderr)
+            print(f"freepool-guard: {p} 目錄讀不到：{e}", file=sys.stderr)
         return 1
     if not a.dry_run:
         atomic_json(CACHE, rep)
     for p, v in rep["providers"].items():
         if v["error"]:
-            print(f"freepool: WARN {p} 讀不到（保留上次結果判定）：{v['error']}", file=sys.stderr)
+            print(f"freepool-guard: WARN {p} 讀不到（保留上次結果判定）：{v['error']}", file=sys.stderr)
             if old and not a.dry_run:  # 單家失敗不要把舊名單洗掉
                 rep["providers"][p] = old.get("providers", {}).get(p, v)
         tools = sum(1 for m in v["free"].values() if m["tools"])
@@ -222,17 +222,17 @@ def cmd_scan(a):
 
 
 def cmd_status(a):
-    print(CACHE.read_text() if CACHE.exists() else '{"message":"先跑 freepool scan"}', end="")
+    print(CACHE.read_text() if CACHE.exists() else '{"message":"先跑 freepool-guard scan"}', end="")
     return 0
 
 
 def cmd_pool(a):
     rep, state = load()
     if not rep:
-        print("freepool: 沒有快取也連不上上游，不列任何模型", file=sys.stderr)
+        print("freepool-guard: 沒有快取也連不上上游，不列任何模型", file=sys.stderr)
         return 1
     if state == "stale":
-        print(f"freepool: WARN 快取 {rep['checked_at']} 已過 {TTL_H}h 且連不上上游", file=sys.stderr)
+        print(f"freepool-guard: WARN 快取 {rep['checked_at']} 已過 {TTL_H}h 且連不上上游", file=sys.stderr)
     for prov, v in rep["providers"].items():
         for mid, m in sorted(v["free"].items()):
             if m["tools"] or not a.tools:
@@ -249,10 +249,10 @@ def cmd_verify(a):
             note = (note + "；" if note else "") + "快取已過期，零價判定僅供參考"
         print(f"{dc_id}\t{verdict}\t{resolved}\t{note}")
         if verdict == "paid":
-            print(f"freepool: 拒派 {dc_id}——上游目錄現價非零，照派會扣錢", file=sys.stderr)
+            print(f"freepool-guard: 拒派 {dc_id}——上游目錄現價非零，照派會扣錢", file=sys.stderr)
             rc = 2
         elif verdict == "free" and resolved != dc_id:
-            print(f"freepool: WARN {dc_id} 不是零價 id，零價的是 {resolved}；照原名打會走付費版", file=sys.stderr)
+            print(f"freepool-guard: WARN {dc_id} 不是零價 id，零價的是 {resolved}；照原名打會走付費版", file=sys.stderr)
         elif verdict == "unknown" and rc == 0:
             rc = 3
     return rc
@@ -261,7 +261,7 @@ def cmd_verify(a):
 def cmd_guard(a):
     rep, state = load()
     if not rep:
-        print("freepool: 沒有快取也連不上上游，無法驗證清冊", file=sys.stderr)
+        print("freepool-guard: 沒有快取也連不上上游，無法驗證清冊", file=sys.stderr)
         return 2
     bad = []
     for dc_id, _model, _fit in catalog_free_rows(a.tsv):
@@ -271,16 +271,16 @@ def cmd_guard(a):
     for dc_id, verdict, resolved, note in bad:
         print(f"{dc_id}\t{verdict}\t{resolved}\t{note}")
     if bad:
-        print(f"freepool: 清冊有 {len(bad)} 列 billing=free 已不是零價或 id 不對，先改清冊", file=sys.stderr)
+        print(f"freepool-guard: 清冊有 {len(bad)} 列 billing=free 已不是零價或 id 不對，先改清冊", file=sys.stderr)
         return 1
-    print(f"freepool: 清冊 kilo／openrouter 免費列全部仍零價（{state}，{rep['checked_at']}）")
+    print(f"freepool-guard: 清冊 kilo／openrouter 免費列全部仍零價（{state}，{rep['checked_at']}）")
     return 0
 
 
 def cmd_propose(a):
     rep, state = load()
     if not rep:
-        print("freepool: 沒有快取也連不上上游", file=sys.stderr)
+        print("freepool-guard: 沒有快取也連不上上游", file=sys.stderr)
         return 2
     have = {dc_id for dc_id, _m, _f in catalog_free_rows(a.tsv)}
     verified = {f"{prov}/{mid}": m for prov, v in rep["providers"].items()
@@ -293,7 +293,7 @@ def cmd_propose(a):
             print(f"RM\t{dc_id}\t{verdict}：{note}")
         elif resolved != dc_id:
             print(f"FIX\t{dc_id}\t→ {resolved}（{note}）")
-    print("freepool: 以上只是建議，沒有改清冊（改了要先實打驗證可用性）", file=sys.stderr)
+    print("freepool-guard: 以上只是建議，沒有改清冊（改了要先實打驗證可用性）", file=sys.stderr)
     return 0
 
 
@@ -335,7 +335,7 @@ def om_password():
 
 def cmd_probe(a):
     if len(a.dc_id) > PROBE_MAX:
-        print(f"freepool: 一次最多探 {PROBE_MAX} 個（給了 {len(a.dc_id)}）；kilo 額度全帳號共用，分批隔天再測", file=sys.stderr)
+        print(f"freepool-guard: 一次最多探 {PROBE_MAX} 個（給了 {len(a.dc_id)}）；kilo 額度全帳號共用，分批隔天再測", file=sys.stderr)
         return 2
     rep, _state = load()
     ids = []
@@ -343,23 +343,23 @@ def cmd_probe(a):
         prov, mid = split_id(dc_id)
         verdict, resolved, note = judge(dc_id, rep)
         if prov != "kilo":
-            print(f"freepool: 拒探 {dc_id}——只探 kilo（openrouter 免費模型被帳號 guardrail 擋，其他家用 dcq 真實派工驗）", file=sys.stderr)
+            print(f"freepool-guard: 拒探 {dc_id}——只探 kilo（openrouter 免費模型被帳號 guardrail 擋，其他家用 dcq 真實派工驗）", file=sys.stderr)
             return 2
         if verdict != "free" or resolved != dc_id:
-            print(f"freepool: 拒探 {dc_id}——{verdict}{'：' + note if note else ''}（只探目錄現價零的 id）", file=sys.stderr)
+            print(f"freepool-guard: 拒探 {dc_id}——{verdict}{'：' + note if note else ''}（只探目錄現價零的 id）", file=sys.stderr)
             return 2
         ids.append(mid)
     # 上游 id 本身帶 nvidia/、openrouter/ 等前綴，OmniRoute 會當成自己的 provider 解析；一律加 kilo-gateway 別名 kg/。
     sent = {f"kg/{mid}": mid for mid in ids}
     pw = om_password()
     if not pw:
-        print("freepool: 取不到 OMNIROUTE_ADMIN_PASSWORD（~/.creds/omniroute/.env）", file=sys.stderr)
+        print("freepool-guard: 取不到 OMNIROUTE_ADMIN_PASSWORD（~/.creds/omniroute/.env）", file=sys.stderr)
         return 3
     try:
         s, j = om_call("POST", "/api/cli/connect",
                        {"password": pw, "name": "freepool-probe", "scope": "admin", "expiresInDays": 1})
         if s != 200:
-            print(f"freepool: OmniRoute 登入失敗（HTTP {s}）", file=sys.stderr)
+            print(f"freepool-guard: OmniRoute 登入失敗（HTTP {s}）", file=sys.stderr)
             return 3
         tok = j["token"]
         s, j = om_call("GET", "/api/providers", token=tok)
@@ -369,7 +369,7 @@ def cmd_probe(a):
             s, j = om_call("POST", "/api/providers", {"provider": "kilo-gateway", "apiKey": "anonymous",
                                                       "name": PROBE_CONN, "providerSpecificData": {}}, tok)
             if s not in (200, 201):
-                print(f"freepool: 建 OmniRoute kilo 探測連線失敗（HTTP {s}）：{j}", file=sys.stderr)
+                print(f"freepool-guard: 建 OmniRoute kilo 探測連線失敗（HTTP {s}）：{j}", file=sys.stderr)
                 return 3
             conn = j["connection"]["id"]
         if not was_active:
@@ -381,12 +381,12 @@ def cmd_probe(a):
         finally:
             s_off = om_call("PATCH", "/api/providers", {"ids": [conn], "isActive": False}, tok)[0] if not was_active else 200
             if s_off != 200:
-                print(f"freepool: WARN 探測連線沒關成（HTTP {s_off}），OmniRoute 健檢會定時打它，手動停用 {conn}", file=sys.stderr)
+                print(f"freepool-guard: WARN 探測連線沒關成（HTTP {s_off}），OmniRoute 健檢會定時打它，手動停用 {conn}", file=sys.stderr)
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
-        print(f"freepool: OmniRoute 不可用（{OMNIROUTE}）：{e}", file=sys.stderr)
+        print(f"freepool-guard: OmniRoute 不可用（{OMNIROUTE}）：{e}", file=sys.stderr)
         return 3
     if s != 200:
-        print(f"freepool: test-all 失敗（HTTP {s}）：{j}", file=sys.stderr)
+        print(f"freepool-guard: test-all 失敗（HTTP {s}）：{j}", file=sys.stderr)
         return 3
     rc = 0
     res = j.get("results") or {}
@@ -398,7 +398,7 @@ def cmd_probe(a):
             getattr(a, "results", {})[f"kilo/{mid}"] = r.get("status")
         print(f"kilo/{mid}\t{r.get('status')}\t{r.get('latencyMs', '')}\t{r.get('statusCode') or ''} {r.get('error') or ''}".rstrip())
     if j.get("stoppedEarly"):
-        print(f"freepool: OmniRoute 提前停止（{j.get('stopReason')}）——上游在限流或擋人，別重試，隔天再測", file=sys.stderr)
+        print(f"freepool-guard: OmniRoute 提前停止（{j.get('stopReason')}）——上游在限流或擋人，別重試，隔天再測", file=sys.stderr)
     return rc
 
 
@@ -416,12 +416,12 @@ def cmd_daily(a):
     todo = sorted(f"kilo/{mid}" for mid, m in (kilo.get("free") or {}).items() if m["tools"]
                   and f"kilo/{mid}" not in have and f"kilo/{mid}" not in probed)[:PROBE_MAX]
     if not todo:
-        print("freepool: 沒有新的零價 kilo 模型要探")
+        print("freepool-guard: 沒有新的零價 kilo 模型要探")
         return grc
     pa = argparse.Namespace(dc_id=todo, results={})
     prc = cmd_probe(pa)
     if prc == 3:
-        print("freepool: OmniRoute 不可用，新模型明天再探", file=sys.stderr)
+        print("freepool-guard: OmniRoute 不可用，新模型明天再探", file=sys.stderr)
         return grc
     at = now().isoformat()
     probed.update({k: {"at": at, "status": v} for k, v in pa.results.items()})
@@ -433,7 +433,7 @@ def cmd_daily(a):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="freepool", description=__doc__,
+    p = argparse.ArgumentParser(prog="freepool-guard", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("scan"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_scan)

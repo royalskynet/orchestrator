@@ -49,7 +49,7 @@ dc <task.md> [cwd] [-- <opencode run 原生旗標>...]
 ```
 
 - 任務檔路徑必須**絕對**。
-- 模型**計費分級不擋**：free／sub（訂閱額度）／metered（按量或沒查過的組合），非 free 照派，每筆記 `billing.tsv`，TG 10 分鐘最多一則（`DC_TG_EVERY`）。別家組合名帶 `-free` 不算 free。`kilo/*`、`openrouter/*` 由 `bin/freepool` 讀上游價格目錄現場判定：現價非零或 id 缺 `:free` 後綴（會打到同名付費版）就 rc=1 不派，dcq 冷卻換下一隻；`DC_FREEPOOL=off` 跳過。
+- 模型**計費分級不擋**：free／sub（訂閱額度）／metered（按量或沒查過的組合），非 free 照派，每筆記 `billing.tsv`，TG 10 分鐘最多一則（`DC_TG_EVERY`）。別家組合名帶 `-free` 不算 free。`kilo/*`、`openrouter/*` 由 `bin/freepool-guard` 讀上游價格目錄現場判定：現價非零或 id 缺 `:free` 後綴（會打到同名付費版）就 rc=1 不派，dcq 冷卻換下一隻；`DC_FREEPOOL=off` 跳過。
 - 未指定模型時釘死 `space-bunny-free`，不吃 opencode config 的 per-agent 付費 model。
 - **停止免費就終止並跳警報**：派工前 `bin/freecheck` 查 `/zen/go/v1/usage`，任一額度窗 `status != ok`，或要用的 Go 免費模型從 `/models` 消失 → 寫 `~/.dcq/.ALARM`＋`hpush` 推播，`dc` rc=2 中止、`dcq` 全隊停止收單。名字有 `-free` 不代表還免費（Go 的免費是限時的），額度才是事實（`percent > 0` 只 WARN 不停：付費層和別處用 Go 都會讓它上升）。誤報就 `DC_FREECHECK=off`，或刪掉 `.ALARM`。
 - `--agent <name>` 可指定 opencode agent（控制工具權限），但模型仍由 dc 釘死。

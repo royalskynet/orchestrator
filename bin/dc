@@ -40,9 +40,9 @@ is_free() {
 # 只分級不擋：非 free 照派，但先發 TG 警示，讓花錢這件事一定有人看到。
 # *-free 只在 opencode 系才算數——別家路由器的組合名帶 -free（omniroute/auto/best-free）不保證成員全免費。
 tier() {
-  # kilo／openrouter 有公開價格目錄 → 以 freepool 的現場判定為準（下方 freepool 閘先算好）。
+  # kilo／openrouter 有公開價格目錄 → 以 freepool-guard 的現場判定為準（下方 freepool-guard 閘先算好）。
   # 寫死的 glob 兩頭都漏：接不到新的零價模型（kilo-auto/free、stealth/*、reflection/beam-free），
-  # 也擋不住同一個 id 漲價。沒判定（其他 provider、或 freepool 關掉）才往下走 glob。
+  # 也擋不住同一個 id 漲價。沒判定（其他 provider、或 freepool-guard 關掉）才往下走 glob。
   case "${DC_FP_VERDICT:-}" in free) echo free; return ;; paid) echo metered; return ;; esac
   case "$1" in
     # 成員 big-pickle→agnes→openrouter/free 全免費（2026-10-02 查 omniroute combos 表；
@@ -202,17 +202,17 @@ case "$m" in opencode/*)
   gl=$(( $("$ZG" until 2>/dev/null || echo 0) - $(date +%s) ))
   [ "$gl" -gt 0 ] && { echo "dc: Zen 免費閘道判濫用冷卻中（剩 ${gl}s），不送請求；要跑請用 dcq（自動走兜底層）或指定非 Zen 模型" >&2; exit 1; } ;;
 esac
-# freepool 閘（2026-10-26，取代 OmniRoute or-free／free-tools 的「免費」保證）：
+# freepool-guard 閘（2026-10-26，取代 OmniRoute or-free／free-tools 的「免費」保證）：
 # kilo／openrouter 的零價狀態每天會變，所以派工前讀一次上游價格目錄的快取（24h，零 token，不實打模型）。
 # 目錄說現價非零就不派（照派會扣錢）；id 缺 :free 後綴會靜默打到同名付費版，也不派、並指出正確 id。
 # rc=1：dcq 當這隻失敗、冷卻後換下一隻，不停整條階梯。DC_FREEPOOL=off 強制跳過。
-FP="$(dirname "$(readlink -f "$0")")/freepool"
+FP="$(dirname "$(readlink -f "$0")")/freepool-guard"
 case "$m" in kilo/*|openrouter/*)
   if [ -x "$FP" ] && [ "${DC_FREEPOOL:-on}" != off ]; then
     _fpl="$("$FP" verify "$m" 2>/dev/null | head -1)"
     _fpv="$(printf '%s' "$_fpl" | cut -f2)"; _fpr="$(printf '%s' "$_fpl" | cut -f3)"
     case "$_fpv" in
-      paid) echo "dc: 中止——${m} 在上游價格目錄現價非零（freepool），照派會扣錢；要強制請設 DC_FREEPOOL=off" >&2; exit 1 ;;
+      paid) echo "dc: 中止——${m} 在上游價格目錄現價非零（freepool-guard），照派會扣錢；要強制請設 DC_FREEPOOL=off" >&2; exit 1 ;;
       free) if [ "$_fpr" = "$m" ]; then DC_FP_VERDICT=free
             else echo "dc: 中止——${m} 不是零價 id，零價的是 ${_fpr}（照原名打會走同名付費版）" >&2; exit 1; fi ;;
     esac

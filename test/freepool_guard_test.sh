@@ -30,7 +30,7 @@ EOF
 fail=0
 chk() { # name want_rc args...
   local n="$1" want="$2"; shift 2
-  out="$(bin/freepool "$@" 2>&1)"; rc=$?
+  out="$(bin/freepool-guard "$@" 2>&1)"; rc=$?
   if [ "$rc" = "$want" ]; then echo "PASS $n"; else echo "FAIL ${n}: rc=${rc} 期望 ${want}"; echo "$out" | sed 's/^/    /'; fail=1; fi
 }
 has() { # name needle output
@@ -43,15 +43,15 @@ chk "沒價格目錄回 unknown" 3 verify nvidia/openai/gpt-oss-20b
 chk "多個裡有付費就 rc=2"  2 verify kilo/kilo-auto/free kilo/anthropic/claude-sonnet-4.5
 
 # 缺 :free 後綴：不得當成同一隻放行，要指出零價的是後綴版（照原名打會走付費版）
-o="$(bin/freepool verify poolside/laguna-s-2.1 2>&1)" || true
-o="$(bin/freepool verify kilo/poolside/laguna-s-2.1 2>&1)" || true
+o="$(bin/freepool-guard verify poolside/laguna-s-2.1 2>&1)" || true
+o="$(bin/freepool-guard verify kilo/poolside/laguna-s-2.1 2>&1)" || true
 has "缺後綴指出零價 id" "kilo/poolside/laguna-s-2.1:free" "$o"
 
 # pool 只列支援 tools 的（lfm-2.5 的 tools=false 不該出現），--all 才列
-o="$(bin/freepool pool 2>/dev/null)"
+o="$(bin/freepool-guard pool 2>/dev/null)"
 has "pool 列零價＋tools" "kilo/kilo-auto/free" "$o"
 case "$o" in *lfm-2.5*) echo "FAIL pool 不該列不支援 tools 的"; fail=1 ;; *) echo "PASS pool 濾掉不支援 tools 的" ;; esac
-has "pool --all 連非 tools 也列" "lfm-2.5" "$(bin/freepool pool --all 2>/dev/null)"
+has "pool --all 連非 tools 也列" "lfm-2.5" "$(bin/freepool-guard pool --all 2>/dev/null)"
 
 # guard：清冊 billing=free 的列漲價或 id 缺後綴 → rc=1；全零價 → rc=0
 cat > "$T/ok.tsv" <<'EOF'
@@ -72,7 +72,7 @@ EOF
 chk "清冊列漲價 guard 擋" 1 guard "$T/paid.tsv"
 
 # propose：清冊缺的零價模型要提 ADD，且只提支援 tools 的
-o="$(bin/freepool propose "$T/ok.tsv" 2>/dev/null)"
+o="$(bin/freepool-guard propose "$T/ok.tsv" 2>/dev/null)"
 has "propose 提 ADD" "ADD	kilo/poolside/laguna-s-2.1:free" "$o"
 
 # probe：拒探的都要在連 OmniRoute 之前擋下（OMNIROUTE_URL 指向關閉的 port，連了就會變 rc=3）
@@ -85,17 +85,17 @@ chk "probe OmniRoute 不在回 3" 3 probe kilo/kilo-auto/free
 if bin/../oc-probe/bin/oc-free-check -p kilo >/dev/null 2>&1; then echo "FAIL oc-free-check 沒擋 kilo"; fail=1; else echo "PASS oc-free-check 擋 kilo 併發探測"; fi
 # daily：OmniRoute 不在時 rc 照 guard、不寫探測記錄（明天再探）；探過的不重探
 export FREEPOOL_PROBED="$T/probed.json"
-o="$(bin/freepool daily "$T/ok.tsv" 2>&1)"; rc=$?
+o="$(bin/freepool-guard daily "$T/ok.tsv" 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ ! -e "$FREEPOOL_PROBED" ] && echo "PASS daily OmniRoute 不在不記錄" || { echo "FAIL daily OmniRoute 不在：rc=$rc"; echo "$o"; fail=1; }
 echo '{"kilo/poolside/laguna-s-2.1:free":{"at":"x","status":"error"}}' > "$FREEPOOL_PROBED"
-has "daily 探過的不重探" "沒有新的零價 kilo 模型" "$(bin/freepool daily "$T/ok.tsv" 2>&1)"
+has "daily 探過的不重探" "沒有新的零價 kilo 模型" "$(bin/freepool-guard daily "$T/ok.tsv" 2>&1)"
 chk "daily guard 擋照樣回 1" 1 daily "$T/paid.tsv"
 unset OMNIROUTE_URL OMNIROUTE_ADMIN_PASSWORD FREEPOOL_PROBED
 
 # 沒快取又連不上上游：不得宣告任何模型免費（fail-closed）
 rm -f "$FREEPOOL_CACHE"
 chk "無快取時 pool 不列模型" 1 pool
-o="$(bin/freepool verify kilo/kilo-auto/free 2>&1)" || true
+o="$(bin/freepool-guard verify kilo/kilo-auto/free 2>&1)" || true
 case "$o" in *"	free	"*) echo "FAIL 無快取卻宣告免費"; fail=1 ;; *) echo "PASS 無快取不宣告免費" ;; esac
 
 # dc 的 freepool 閘：付費 id 要在送出請求前就中止（不產生任何 opencode 呼叫）

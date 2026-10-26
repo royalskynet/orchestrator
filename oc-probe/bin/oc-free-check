@@ -460,9 +460,9 @@ def main():
             print(f"X_POOL_CHANGE {tid} {' '.join(text.split())[:120]}")
         sys.exit(3 if hits else 0)
     # 10-26：kilo 免費額度全帳號共用，併發打全池一次就燒光（實測 -p kilo -j 4 後全回 Free usage limit reached），
-    # 之前也被判濫用過。kilo 一律走 freepool probe（OmniRoute test-all：逐個、429／403 連發自動停）。
+    # 之前也被判濫用過。kilo 一律走 freepool-guard probe（OmniRoute test-all：逐個、429／403 連發自動停）。
     if "kilo" in a.providers.split():
-        sys.exit("oc-free-check: 不探測 kilo——改用 freepool probe <kilo/...>（OmniRoute 逐個探測，連發 429 自動停）")
+        sys.exit("oc-free-check: 不探測 kilo——改用 freepool-guard probe <kilo/...>（OmniRoute 逐個探測，連發 429 自動停）")
     if not os.path.exists(CACHE):
         sys.exit(f"找不到 {CACHE}（先跑一次 opencode 產生快取）")
     # dc 判 Zen 免費閘道濫用時寫的全域閘檔（同一出口 IP）：閘內併發探測每個模型只會加重濫用訊號，

@@ -262,7 +262,7 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 `catalog/models.tsv` 是本機確實可調用模型的唯一清冊，每列標 `free`（免費）／`sub`（付費訂閱）／`api`（付費 API）。dcq 依清冊組層，順序固定為免費 → 訂閱 → API：
 
 - 免費層：`free` 且 `dc_id` 無斜線（Zen 免費，只能經 `opencode run`），加上 `opencode-go/*-free`（2026-10-22 起，`DCQ_GOFREE_MAIN=0` 關）與直連的 `kilo/*`、`google/*`、`nvidia/*`、`groq/*`、`openrouter/*`（2026-10-25 起）。
-- 兜底層：只剩 `omniroute/*`，**本機已空**（2026-10-26：`omniroute/or-free`、`omniroute/nim-pool` 退役，免費編排改走 `freepool` ＋ `kilo/kilo-auto/free`，NIM 走直連）。`fit=easy-only` 的只派 easy 工單（`or-free` 23 跑 1 過）。
+- 兜底層：只剩 `omniroute/*`，**本機已空**（2026-10-26：`omniroute/or-free`、`omniroute/nim-pool` 退役，免費編排改走 `freepool-guard` ＋ `kilo/kilo-auto/free`，NIM 走直連）。`fit=easy-only` 的只派 easy 工單（`or-free` 23 跑 1 過）。
   - 直連模型要有 key（`NVIDIA_API_KEY`／`GROQ_API_KEY`／`GEMINI_API_KEY`／`OPENROUTER_API_KEY`，或 opencode `auth.json`，或 `opencode.json` 的 `options.apiKey`），`opencode.json` 的 `enabled_providers` 沒排除該 provider，且（google 以外）模型列在 `provider.<p>.models`，否則組池時剔除。`omniroute/*` 沒在 `opencode.json` 宣告也剔除。
 
 **不裝 OmniRoute**：清冊的 `omniroute/*` 會自動剔出，其餘照常。設定步驟：
@@ -273,14 +273,14 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 
 ### freepool：免費名單自己查（2026-10-26）
 
-「哪些模型現在免費」不靠寫死的名單，也不靠別家路由器的組合名（OmniRoute 的 `or-free`／`free-tools` 就是這種保證）。`bin/freepool` 直接讀有公開價格目錄的 provider（Kilo、OpenRouter，都免 key），用 `pricing.prompt == 0 && pricing.completion == 0` 現場判定，並要求 `supported_parameters` 含 `tools`（執行人要能呼叫工具）。借鏡 [FreeToken-Bots](https://github.com/limin112/min-skill/tree/main/skills/FreeToken-Bots)：免費是動態的，過期名單不得授權呼叫。
+「哪些模型現在免費」不靠寫死的名單，也不靠別家路由器的組合名（OmniRoute 的 `or-free`／`free-tools` 就是這種保證）。`bin/freepool-guard` 直接讀有公開價格目錄的 provider（Kilo、OpenRouter，都免 key），用 `pricing.prompt == 0 && pricing.completion == 0` 現場判定，並要求 `supported_parameters` 含 `tools`（執行人要能呼叫工具）。借鏡 [FreeToken-Bots](https://github.com/limin112/min-skill/tree/main/skills/FreeToken-Bots)：免費是動態的，過期名單不得授權呼叫。
 
 ```sh
-freepool scan                      # 讀上游目錄、寫快取 ~/.dcq/freepool.json、印與上次的差異（零 token，不實打模型）
-freepool pool                      # 此刻零價＋支援 tools 的 dc_id
-freepool verify kilo/kilo-auto/free   # 單一 dc_id：rc 0 零價、2 現價非零、3 查不到
-freepool guard catalog/models.tsv  # 清冊 billing=free 的 kilo／openrouter 列是否還零價；rc=1 有漲價或 id 缺後綴
-freepool propose catalog/models.tsv   # 對清冊提增刪建議（只印，不改檔）
+freepool-guard scan                      # 讀上游目錄、寫快取 ~/.dcq/freepool.json、印與上次的差異（零 token，不實打模型）
+freepool-guard pool                      # 此刻零價＋支援 tools 的 dc_id
+freepool-guard verify kilo/kilo-auto/free   # 單一 dc_id：rc 0 零價、2 現價非零、3 查不到
+freepool-guard guard catalog/models.tsv  # 清冊 billing=free 的 kilo／openrouter 列是否還零價；rc=1 有漲價或 id 缺後綴
+freepool-guard propose catalog/models.tsv   # 對清冊提增刪建議（只印，不改檔）
 ```
 
 三個 fail-closed 的點：
@@ -289,11 +289,11 @@ freepool propose catalog/models.tsv   # 對清冊提增刪建議（只印，不�
 - **缺 `:free` 後綴不放行**：`kilo/poolside/laguna-s-2.1` 與 `…:free` 是兩隻不同的模型，前者收費。少打後綴會靜默走付費版，所以 dc 直接中止並印出零價的那個 id。
 - **沒快取也連不上上游時不宣告任何模型免費**（`pool` rc=1、`verify` 回 unknown）。快取過期（`FREEPOOL_TTL_H`，預設 24h）又連不上，判定會標「僅供參考」。
 
-`oc-probe daily`（每天 06:00）跑一支 `freepool daily`＝`scan` ＋ `guard` ＋ 新零價 kilo 模型實打（清冊沒有、`~/.dcq/freepool-probed.json` 沒記過的，每天 ≤5，只印「可加入清冊」不改檔）：新上架／下架／漲價印在 launchd log，清冊有列已不是零價就推 TG（那是會扣錢的事）。沒裝 oc-probe 就自己排一條 `freepool scan`，否則名單會過期。
+`oc-probe daily`（每天 06:00）跑一支 `freepool-guard daily`＝`scan` ＋ `guard` ＋ 新零價 kilo 模型實打（清冊沒有、`~/.dcq/freepool-probed.json` 沒記過的，每天 ≤5，只印「可加入清冊」不改檔）：新上架／下架／漲價印在 launchd log，清冊有列已不是零價就推 TG（那是會扣錢的事）。沒裝 oc-probe 就自己排一條 `freepool-guard scan`，否則名單會過期。
 
-其他 provider（Zen、NIM、Groq、Google AI Studio）沒有價格端點，`freepool` 回 `unknown` 不表態，計費分級照 `dc` 的 `tier()` 規則。
+其他 provider（Zen、NIM、Groq、Google AI Studio）沒有價格端點，`freepool-guard` 回 `unknown` 不表態，計費分級照 `dc` 的 `tier()` 規則。
 
-**實打可用性只走 `freepool probe`，禁止自己併發打。** Kilo 免 key 免費額度全帳號共用，10-26 用 `oc-free-check -p kilo -j 4` 打 22 隻，額度當場燒光（全回 `Free usage limit reached`），之前也被判過濫用。`freepool probe kilo/<id>...` 交給本機 OmniRoute 的 `POST /api/models/test-all`：逐個送、429 連 3 次或 403 連 2 次自動停；一次最多 5 個、只收目錄現價零的 id。它用 OmniRoute 裡的匿名 kilo 連線（`Kilo anonymous (combo)`，與 Coco 的 `kilo-free` combo 共用；原本停用才會在 probe 後關回去）。`oc-free-check -p kilo` 已直接拒跑。OmniRoute 只當探測工具，派工路徑不經過它。
+**實打可用性只走 `freepool-guard probe`，禁止自己併發打。** Kilo 免 key 免費額度全帳號共用，10-26 用 `oc-free-check -p kilo -j 4` 打 22 隻，額度當場燒光（全回 `Free usage limit reached`），之前也被判過濫用。`freepool-guard probe kilo/<id>...` 交給本機 OmniRoute 的 `POST /api/models/test-all`：逐個送、429 連 3 次或 403 連 2 次自動停；一次最多 5 個、只收目錄現價零的 id。它用 OmniRoute 裡的匿名 kilo 連線（`Kilo anonymous (combo)`，與 Coco 的 `kilo-free` combo 共用；原本停用才會在 probe 後關回去）。`oc-free-check -p kilo` 已直接拒跑。OmniRoute 只當探測工具，派工路徑不經過它。
 
 各家免費額度實測（2026-10-25）：Groq 免費方案 8000 TPM，一次 opencode 請求約 8000 token，只放 easy；NVIDIA NIM 約 40 RPM，併發上限 2；OpenRouter `:free` 會被帳號的 guardrail（provider／資料政策限制）擋成 404，要先在 openrouter.ai 設定放行；Kilo Gateway 會記錄 prompt，機敏工單別派；Kilo 免 key 的免費額度是**整個帳號共用**，一次把十幾隻模型全探測一遍就會把當期額度打光（2026-10-26 實測：`oc-free-check -p kilo` 22 隻跑完後，所有 `kilo/*` 都回 `Free usage limit reached`），要探測就分批。
 - 訂閱層：`sub`（`opencode-go/*`）。

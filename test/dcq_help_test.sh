@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dcq help：rc 0、有觀念總覽（派法四種、freepool 是閘不是層）、後面接 usage；無參數仍 rc 2 印 usage。
+# dcq help：rc 0、有觀念總覽（派法四種、freepool 層與 freepool-guard 腳本）、後面接 usage；無參數仍 rc 2 印 usage。
 set -u
 . "$(dirname "$0")/env.sh"
 cd "$(dirname "$0")/.."

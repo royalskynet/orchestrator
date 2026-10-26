@@ -1520,13 +1520,13 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
   懲罰層＝停滯率高的累犯；冷宮＝0 PASS；兩者在兩層之後，層內 opencode 的排前面；7 天沒新樣本假釋回原層。
   兜底層＝omniroute/*（本機已空）。
 
-■ freepool：上工的是「層」，bin/freepool 是這層的守門與補貨
+■ freepool：上工的是「層」，bin/freepool-guard 是這層的守門與補貨
   派工＝dcq 從 freepool 層挑模型 → dc → opencode run，跟 opencode free 層同一套執行路徑。
-  bin/freepool 本身不派工，負責三件事：派前驗價（dc 自動呼叫 freepool verify）、每天補貨（freepool daily）、
-  手動實打新模型（freepool probe）。
+  bin/freepool-guard 本身不派工，負責三件事：派前驗價（dc 自動呼叫 freepool-guard verify）、每天補貨（freepool-guard daily）、
+  手動實打新模型（freepool-guard probe）。
   kilo／openrouter 的零價名單每天會變。dc 派 kilo/*、openrouter/* 前讀上游價格目錄快取（24h，不打模型），
   現價非零或缺 :free 後綴就拒派；判不了也不派（fail-closed）。google／nvidia／groq 沒有價格目錄，靠清冊與 provider 規則判免費。
-  實打 kilo 只准 `freepool probe`（經 OmniRoute test-all 逐個、≤5 隻）：kilo 免 key 額度全帳號共用，
+  實打 kilo 只准 `freepool-guard probe`（經 OmniRoute test-all 逐個、≤5 隻）：kilo 免 key 額度全帳號共用，
   併發探測會整批回 Free usage limit reached。
 
 ■ 難度與 fit
@@ -1543,7 +1543,7 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
 ■ 名單與每日維護
   模型清冊（唯一來源）catalog/models.tsv；provider 併發上限 catalog/providers.tsv。
   每天 06:00 oc-probe daily（只 M4，launchd local.opencode-probe）：Zen 上下架、Go 免費同步、
-  freepool daily（刷價格目錄＋清冊漲價告警＋實打新零價 kilo 模型，記在 ~/.dcq/freepool-probed.json）。
+  freepool-guard daily（刷價格目錄＋清冊漲價告警＋實打新零價 kilo 模型，記在 ~/.dcq/freepool-probed.json）。
   新模型只提議「可加入清冊」，人核准才加；M2 加 kilo 模型要同步補 ~/.config/opencode/opencode.json。
   健檢 dcq doctor [--fix]。
 
