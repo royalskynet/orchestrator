@@ -1040,7 +1040,14 @@ run_job() {
     fi
     pick=$(pick_model "$tried" "$pool")
     case "$pick" in
-      BUSY) sleep 2; continue ;;
+      BUSY)
+        # 軟分層（2026-10-26 使用者定，不嚴格排隊）：opencode free 層的模型只是暫時被別張單佔滿（不是失敗、不是冷卻），
+        # 就先借 freepool 有空的那隻跑這次，不乾等；opencode 有空位時永遠先用它。
+        if [ "$fp" = 0 ] && [ "$paid" = 0 ] && [ -n "$fp_pool" ]; then
+          pick="$(pick_model "$tried" "$fp_pool")"
+          case "$pick" in BUSY|NONE|COOL*) sleep 2; continue ;; esac
+          echo "dcq[$id] opencode free 層暫時全忙，借 freepool：$(echo "$pick" | cut -d" " -f2)" >&2
+        else sleep 2; continue; fi ;;
       NONE|COOL*)
         # 免費層整輪試完：還有輪次就清空 tried 再來一輪（冷卻中的那幾隻會自動跳過）。
         # 本單已經真的跑過卻沒交件的（stall／slow／spin／驗收未過）不再試：第 2 輪只給上游失敗的。
@@ -1061,7 +1068,7 @@ run_job() {
         fi
         # opencode free 層用完 → freepool 層（非 opencode 體系的免費直連），輪次重算；paid 仍 0，照樣有 FREE_ROUNDS 輪
         if [ "$fp" = 0 ] && [ "$paid" = 0 ] && [ -n "$fp_pool" ]; then
-          fp=1; pool="$fp_pool"; tried=""; round=1
+          fp=1; pool="$fp_pool"; tried="$noretry"; round=1
           echo "dcq[$id] opencode free 層用盡（${pick%% *}），換 freepool 層：${fp_pool}" >&2; continue
         fi
         # 免費輪次用完，或免費模型全在冷卻 → 先把免費的層用完：懲罰層（免費累犯）→ 兜底層，
@@ -1508,6 +1515,7 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
       測可用性只用 opencode run 跑一次，API 沒回應不准判失效、不准反覆探測（會被判濫用鎖 IP）。
   2 freepool：非 opencode 體系的免費直連——kilo/、openrouter/*:free、google/、nvidia/、groq/。
   1 整層輪 DCQ_FREE_ROUNDS（預設 2）輪都敗、或全在冷卻，才換 2；2 也一樣輪完才往下。
+  軟分層不排隊：1 的模型只是暫時被別張單佔滿時，這次先借 2 有空的那隻跑，不乾等；1 有空位永遠先用 1。
   層內順序：autorank 依 logs/gaps.tsv 的「每 PASS 秒數＋貝氏平滑」排（dcq rank 看），樣本不足的照清冊列序。
   懲罰層＝停滯率高的累犯；冷宮＝0 PASS；兩者在兩層之後，層內 opencode 的排前面；7 天沒新樣本假釋回原層。
   兜底層＝omniroute/*（本機已空）。

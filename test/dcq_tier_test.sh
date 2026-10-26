@@ -147,6 +147,12 @@ DCQ_MODELS="kilo/k:free za opencode-go/gf-free" DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS
 DCQ_MODELS="kilo/k:free za" DCQ_ORDER=free dcq add "$T/tasks/ft2.md" "$T/w1" mid >/dev/null 2>&1
 DCQ_MODELS="kilo/k:free za" DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 dcq run -j 1 >/dev/null 2>&1
 [ "$(grep '^IN ft2 ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "za kilo/k:free " ] && ok "opencode free 用盡才換 freepool" || bad "換層：$(grep '^IN ft2 ' "$TRACE")"
+# 軟分層：opencode 那隻被另一張單佔滿（每模型 1 槽）時，借 freepool 跑，不乾等
+echo "# s1" > "$T/tasks/slowft1.md"; echo "# s2" > "$T/tasks/slowft2.md"; : > "$TRACE"
+DCQ_MODELS="kilo/k:free zb" DCQ_ORDER=free dcq add "$T/tasks/slowft1.md" "$T/w1" mid >/dev/null 2>&1
+DCQ_MODELS="kilo/k:free zb" DCQ_ORDER=free dcq add "$T/tasks/slowft2.md" "$T/w2" mid >/dev/null 2>&1
+DCQ_MODELS="kilo/k:free zb" DCQ_MODEL_MAX=1 DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 dcq run -j 2 >/dev/null 2>&1
+[ "$(grep '^IN slowft' "$TRACE" | awk '{print $3}' | sort | tr '\n' ' ')" = "kilo/k:free zb " ] && ok "opencode 全忙借 freepool 不排隊" || bad "軟分層：$(grep '^IN slowft' "$TRACE")"
 out="$(DCQ_MODELS="kilo/k:free za" DCQ_AUTORANK=0 dcq plan "$T/tasks/ft2.md" 2>&1)"
 echo "$out" | grep -q '1 免費 opencode：za$' && echo "$out" | grep -q '2 免費 freepool：kilo/k:free$' && ok "plan 分列兩層" || bad "plan 兩層：$out"
 

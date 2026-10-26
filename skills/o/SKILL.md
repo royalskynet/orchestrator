@@ -5,6 +5,10 @@ description: Orchestrator：把工單派給本機已知的各種 LLM（Zen 免�
 
 # Orchestrator（dc／dcq）＝多 LLM 執行人調度（免費優先、訂閱墊底），完成定義＝wo-verify 通過
 
+**先跑 `~/dev/dispatch-router/bin/dcq help`**：派法、層級順序、免費兩層（opencode free → freepool）與 freepool 閘、正規流程與每日維護都在那，不憑記憶。
+
+**鐵則：opencode free 層（Zen 免費、opencode-go/*-free）只准經 opencode CLI 呼叫（opencode run／dc／dcq），禁止 API 直打。**
+
 **預設派工執行人**（觸發詞「派o」）。deepclaude 的「派deep」是另一條線，只補 dc 做不到、又需要 agent 多步自主的場景。dc 走 opencode 客戶端路徑，**免認證即可用**，且沒有 Anthropic 協定牆（整個 Zen 免費池都能用）。
 
 ## dc 做不到的部分
