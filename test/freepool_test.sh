@@ -83,7 +83,14 @@ chk "probe 拒探非 kilo"     2 probe nvidia/openai/gpt-oss-20b
 chk "probe 超過上限拒探"    2 probe kilo/kilo-auto/free kilo/kilo-auto/free kilo/kilo-auto/free kilo/kilo-auto/free kilo/kilo-auto/free kilo/kilo-auto/free
 chk "probe OmniRoute 不在回 3" 3 probe kilo/kilo-auto/free
 if bin/../oc-probe/bin/oc-free-check -p kilo >/dev/null 2>&1; then echo "FAIL oc-free-check 沒擋 kilo"; fail=1; else echo "PASS oc-free-check 擋 kilo 併發探測"; fi
-unset OMNIROUTE_URL OMNIROUTE_ADMIN_PASSWORD
+# daily：OmniRoute 不在時 rc 照 guard、不寫探測記錄（明天再探）；探過的不重探
+export FREEPOOL_PROBED="$T/probed.json"
+o="$(bin/freepool daily "$T/ok.tsv" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$FREEPOOL_PROBED" ] && echo "PASS daily OmniRoute 不在不記錄" || { echo "FAIL daily OmniRoute 不在：rc=$rc"; echo "$o"; fail=1; }
+echo '{"kilo/poolside/laguna-s-2.1:free":{"at":"x","status":"error"}}' > "$FREEPOOL_PROBED"
+has "daily 探過的不重探" "沒有新的零價 kilo 模型" "$(bin/freepool daily "$T/ok.tsv" 2>&1)"
+chk "daily guard 擋照樣回 1" 1 daily "$T/paid.tsv"
+unset OMNIROUTE_URL OMNIROUTE_ADMIN_PASSWORD FREEPOOL_PROBED
 
 # 沒快取又連不上上游：不得宣告任何模型免費（fail-closed）
 rm -f "$FREEPOOL_CACHE"

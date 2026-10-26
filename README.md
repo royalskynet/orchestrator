@@ -285,7 +285,7 @@ freepool propose catalog/models.tsv   # 對清冊提增刪建議（只印，不�
 - **缺 `:free` 後綴不放行**：`kilo/poolside/laguna-s-2.1` 與 `…:free` 是兩隻不同的模型，前者收費。少打後綴會靜默走付費版，所以 dc 直接中止並印出零價的那個 id。
 - **沒快取也連不上上游時不宣告任何模型免費**（`pool` rc=1、`verify` 回 unknown）。快取過期（`FREEPOOL_TTL_H`，預設 24h）又連不上，判定會標「僅供參考」。
 
-`oc-probe daily`（每天 06:00）跑 `scan` ＋ `guard`：新上架／下架／漲價印在 launchd log，清冊有列已不是零價就推 TG（那是會扣錢的事）。沒裝 oc-probe 就自己排一條 `freepool scan`，否則名單會過期。
+`oc-probe daily`（每天 06:00）跑一支 `freepool daily`＝`scan` ＋ `guard` ＋ 新零價 kilo 模型實打（清冊沒有、`~/.dcq/freepool-probed.json` 沒記過的，每天 ≤5，只印「可加入清冊」不改檔）：新上架／下架／漲價印在 launchd log，清冊有列已不是零價就推 TG（那是會扣錢的事）。沒裝 oc-probe 就自己排一條 `freepool scan`，否則名單會過期。
 
 其他 provider（Zen、NIM、Groq、Google AI Studio）沒有價格端點，`freepool` 回 `unknown` 不表態，計費分級照 `dc` 的 `tier()` 規則。
 

@@ -6,6 +6,8 @@
 #                   之後跑選配 hook（OC_PROBE_HOOK，預設 ~/.config/oc-probe/hook；不存在就略過）。
 #                   2026-10-24 使用者定：不排程實打探測，出錯才處理——dcq 派工撞錯就冷卻／記 .gone、
 #                   查清單決定恢復或下架；新模型由真實派工測，0 PASS 自動進冷宮。實打只剩手動 oc-probe probe。
+#                   3. freepool daily：kilo／openrouter 價格目錄 scan＋guard，並實打清冊沒有、沒探過的新零價 kilo 模型
+#                      （10-26 使用者定，每天 ≤5、經 OmniRoute test-all 逐個送，記錄檔去重不重探）。
 #   oc-probe x      每 4 小時（launchd local.opencode-probe.x）：讀 @opencode 新推文；能讀出的改名／上下架記 x-pool.tsv。
 #   oc-probe probe  強制探測一次；oc-probe sync 強制 go-sync 掃一次。
 # 偵測到變化 → dcq sync-catalog 把增刪回寫清冊（無變動不改檔；清冊乾淨才自動 commit）。
@@ -42,17 +44,15 @@ hook() {
   "$h" || echo "oc-probe: hook 失敗（rc=$?）"
 }
 
-# 免費名單雷達（零 token，不實打模型）：讀 kilo／openrouter 的公開價格目錄判「此刻零價」。
-# 免費是動態的——模型會被下架，也會悄悄變成收費。所以 scan 之後一定跑 guard：
-# 清冊還掛著 billing=free 但上游已漲價（或 id 缺 :free 後綴會打到付費版）就發警示，因為那是會扣錢的。
+# 免費名單雷達：一支 freepool daily 做完 scan（讀 kilo／openrouter 價格目錄）→ guard → 新零價模型探測。
+# 免費是動態的——模型會被下架，也會悄悄變成收費；清冊還掛著 billing=free 但上游已漲價就發警示（會扣錢）。
+# 實打只探清冊沒有、也沒探過的新 kilo 模型，每天最多 5 個，經 OmniRoute test-all 逐個送（fix 11401）。
 freepool_scan() {
   local FP="$HERE/../../bin/freepool" out rc=0
   [ -x "$FP" ] || return 0
-  out="$("$FP" scan 2>&1)"; rc=$?
+  out="$("$FP" daily "$HERE/../../catalog/models.tsv" 2>&1)"; rc=$?
   printf '%s\n' "$out"
-  [ "$rc" = 0 ] || { echo "oc-probe: freepool scan 失敗（rc=$rc）"; return 1; }
-  out="$("$FP" guard "$HERE/../../catalog/models.tsv" 2>&1)"; rc=$?
-  printf '%s\n' "$out"
+  [ "$rc" = 2 ] && { echo "oc-probe: freepool scan 失敗"; return 1; }
   if [ "$rc" != 0 ]; then
     local msg="⚠️ freepool：清冊有 billing=free 的模型在上游已不是零價（照派會扣錢）
 ${out}"

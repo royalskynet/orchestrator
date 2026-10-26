@@ -16,6 +16,8 @@
   freepool verify <dc_id>...    判定單一 dc_id：rc 0 全部零價、2 有付費（拒派）、3 有查不到
   freepool guard <models.tsv>   清冊 billing=free 的 kilo／openrouter 列是否還零價；rc=1 有漲價或下架
   freepool propose <models.tsv> 對清冊提增刪建議（只印，不改檔）
+  freepool daily <models.tsv>   每日一支（oc-probe 06:00 呼叫）：scan → guard → 對清冊還沒有、也還沒探過的
+                                新零價 kilo 模型 probe（每天最多 PROBE_MAX 個，結果記 FREEPOOL_PROBED 不重探）
   freepool probe <kilo/...>...  實打可用性：交給本機 OmniRoute 的 /api/models/test-all（逐個送、
                                 429 連 3 次或 403 連 2 次自動停）。一次最多 PROBE_MAX 個、只收零價 id。
                                 kilo 免費額度全帳號共用，禁止自己併發打（10-26 打 22 個燒光額度）。
@@ -302,6 +304,8 @@ PROBE_MAX = 5
 # 所以跟 Coco 用的 kilo-free combo 共用；名稱是新建時才用。probe 結束只把「原本停用」的關回去，
 # 原本啟用（combo 在用）就不動，免得把 Coco 的免費鏈路關掉。
 PROBE_CONN = "Kilo anonymous (combo)"
+# 探過的記錄（dc_id → {at, status}）：daily 不重探。要重探某隻就把它從檔裡刪掉。
+PROBED = Path(os.environ.get("FREEPOOL_PROBED") or Path.home() / ".dcq" / "freepool-probed.json")
 
 
 def om_call(method, path, body=None, token=None, timeout=30):
@@ -390,10 +394,42 @@ def cmd_probe(a):
         r = res.get(key) or res.get(mid) or {"status": "error", "error": "未測（OmniRoute 提前停止）"}
         ok = r.get("status") in ("ok", "slow")
         rc = rc if ok else 1
+        if res.get(key) or res.get(mid):
+            getattr(a, "results", {})[f"kilo/{mid}"] = r.get("status")
         print(f"kilo/{mid}\t{r.get('status')}\t{r.get('latencyMs', '')}\t{r.get('statusCode') or ''} {r.get('error') or ''}".rstrip())
     if j.get("stoppedEarly"):
         print(f"freepool: OmniRoute 提前停止（{j.get('stopReason')}）——上游在限流或擋人，別重試，隔天再測", file=sys.stderr)
     return rc
+
+
+def cmd_daily(a):
+    if os.environ.get("FREEPOOL_OFFLINE") != "1" and cmd_scan(argparse.Namespace(dry_run=False)) != 0:
+        return 2
+    grc = cmd_guard(a)
+    rep, _state = load(refresh=False)
+    have = {dc_id for dc_id, _m, _f in catalog_free_rows(a.tsv)}
+    try:
+        probed = json.loads(PROBED.read_text()) if PROBED.exists() else {}
+    except (ValueError, OSError):
+        probed = {}
+    kilo = (rep or {}).get("providers", {}).get("kilo") or {}
+    todo = sorted(f"kilo/{mid}" for mid, m in (kilo.get("free") or {}).items() if m["tools"]
+                  and f"kilo/{mid}" not in have and f"kilo/{mid}" not in probed)[:PROBE_MAX]
+    if not todo:
+        print("freepool: 沒有新的零價 kilo 模型要探")
+        return grc
+    pa = argparse.Namespace(dc_id=todo, results={})
+    prc = cmd_probe(pa)
+    if prc == 3:
+        print("freepool: OmniRoute 不可用，新模型明天再探", file=sys.stderr)
+        return grc
+    at = now().isoformat()
+    probed.update({k: {"at": at, "status": v} for k, v in pa.results.items()})
+    atomic_json(PROBED, probed)
+    for k, v in pa.results.items():
+        if v in ("ok", "slow"):
+            print(f"可加入清冊\t{k}")
+    return grc
 
 
 def main(argv=None):
@@ -408,6 +444,7 @@ def main(argv=None):
     s = sub.add_parser("guard"); s.add_argument("tsv"); s.set_defaults(fn=cmd_guard)
     s = sub.add_parser("propose"); s.add_argument("tsv"); s.set_defaults(fn=cmd_propose)
     s = sub.add_parser("probe"); s.add_argument("dc_id", nargs="+"); s.set_defaults(fn=cmd_probe)
+    s = sub.add_parser("daily"); s.add_argument("tsv"); s.set_defaults(fn=cmd_daily)
     a = p.parse_args(argv)
     return a.fn(a)
 
