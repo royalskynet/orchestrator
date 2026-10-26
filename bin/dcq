@@ -346,6 +346,13 @@ fi
 # 排在 11 跑 8 過的 opencode-go/beam 前面 —— 比較慢的那隻先跑，每張工單都在替它白等。
 # 只在層內排：不跨層搬移（不把免費層的模型搬進兜底層、也不把兜底層的搬去訂閱層），也不分難度（層內用全部紀錄）。
 # DCQ_MODELS 有設、或 DCQ_AUTORANK=0 就不排（跟免費層同一個開關）。
+# 免費層分兩層（2026-10-26 使用者定）：opencode free（Zen 無斜線＋opencode-go/*-free，opencode 自家免費）先，
+# freepool（kilo／openrouter／google／nvidia／groq 等非 opencode 體系的免費直連）後，兩層絕不混在同一層。
+# 各層內順序沿用 autorank 的排名（只做穩定分割，不重算）；各層各自有 FREE_ROUNDS 輪。
+# 懲罰層／冷宮仍是兩層之後的共用降級區，層內同樣 opencode 的排前面。
+oc_part() { local m o=""; for m in $1; do case "$m" in */*) case "$m" in opencode-go/*) ;; *) continue ;; esac ;; esac; o="$o${o:+ }$m"; done; echo "$o"; }
+fp_part() { local m o=""; for m in $1; do case "$m" in opencode-go/*) continue ;; */*) o="$o${o:+ }$m" ;; esac; done; echo "$o"; }
+oc_first() { echo $(oc_part "$1") $(fp_part "$1"); }
 rank_layer() {  # $1=該層手排順序（空白分隔）；印接回來的完整順序：懲罰、0 PASS 依序墊該層最後
   local r o p z
   r="$(rank_free "$1")"; o="${r%%|*}"; r="${r#*|}"; p="${r%%|*}"; z="${r#*|}"
@@ -706,11 +713,12 @@ cmd_plan() {
     JOB_TIER="$tier"
     local f p pe t z s a c
     case "$tier" in easy) f="$MODELS_easy" pe="$PEN_easy" z="$ZERO_easy" ;; hard) f="$MODELS_hard" pe="$PEN_hard" z="$ZERO_hard" ;; *) f="$MODELS_mid" pe="$PEN_mid" z="$ZERO_mid" ;; esac
-    f="$(fit_pool "$f")"; pe="$(fit_pool "$pe")"; z="$(fit_pool "$z")"; t="$(fit_pool "$POOL_TAIL")"; s="$(fit_pool "$POOL_PAID")"; a="$(fit_pool "$POOL_API")"; c=""
+    f="$(fit_pool "$f")"; pe="$(oc_first "$(fit_pool "$pe")")"; z="$(oc_first "$(fit_pool "$z")")"; t="$(fit_pool "$POOL_TAIL")"; s="$(fit_pool "$POOL_PAID")"; a="$(fit_pool "$POOL_API")"; c=""
     [ "$order" = free ] && { s=""; a=""; }
     [ "$order" = sub ] && c="$(fit_pool "$POOL_CLAUDE")"
     echo "[$n] $(basename "$task")　難度 $tier"
-    if [ "$order" = sub ] && [ -n "$s" ]; then echo "  1 訂閱：$s"; echo "  2 免費：$f"; else echo "  1 免費：$f"; fi
+    if [ "$order" = sub ] && [ -n "$s" ]; then echo "  1 訂閱：$s"; echo "  2 免費 opencode：$(oc_part "$f")"; echo "  3 免費 freepool：$(fp_part "$f")"
+    else echo "  1 免費 opencode：$(oc_part "$f")"; echo "  2 免費 freepool：$(fp_part "$f")"; fi
     [ "$tier" = hard ] && [ "$BON_N" -ge 2 ] && echo "  · 強模型全冷卻時：best-of-N 同派 ≤${BON_N} 隻 fit=easy（$(not_in "$EASY_STRICT" "$EASY_ONLY")）"
     [ -z "$pe" ] || echo "  · 懲罰：$pe"
     [ -z "$t" ] || echo "  · 兜底：$t"
@@ -982,7 +990,7 @@ bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出�
 
 run_job() {
   local jobfile="$1" id task cwd rc=0 why model slot tried="" n=0 t0 pick sig prevsig prevmodel
-  local pool paid=0 pen=0 tail=0 zero=0 sub=0 cl=0 api=0 round=1 left vr=0 pslot pen_pool tail_pool zero_pool paid_pool cl_pool api_pool noretry="" bon=0 bm ran=0
+  local pool fp_pool fp=0 paid=0 pen=0 tail=0 zero=0 sub=0 cl=0 api=0 round=1 left vr=0 pslot pen_pool tail_pool zero_pool paid_pool cl_pool api_pool noretry="" bon=0 bm ran=0
   id="$(basename "$jobfile" .job)"
   task="$(sed -n 's/^TASK=//p' "$jobfile")"
   cwd="$(sed -n 's/^CWD=//p' "$jobfile")"
@@ -1006,7 +1014,8 @@ run_job() {
   lastsig="$(tree_sig "$cwd")"
   case "$JOB_TIER" in easy) pool="$MODELS_easy" pen_pool="$PEN_easy" zero_pool="$ZERO_easy" ;; hard) pool="$MODELS_hard" pen_pool="$PEN_hard" zero_pool="$ZERO_hard" ;;
     *) JOB_TIER=mid pool="$MODELS_mid" pen_pool="$PEN_mid" zero_pool="$ZERO_mid" ;; esac
-  pool="$(fit_pool "$pool")"; pen_pool="$(fit_pool "$pen_pool")"; zero_pool="$(fit_pool "$zero_pool")"
+  pool="$(fit_pool "$pool")"; pen_pool="$(oc_first "$(fit_pool "$pen_pool")")"; zero_pool="$(oc_first "$(fit_pool "$zero_pool")")"
+  fp_pool="$(fp_part "$pool")"; pool="$(oc_part "$pool")"
   tail_pool="$(fit_pool "$POOL_TAIL")"; paid_pool="$(fit_pool "$POOL_PAID")"; api_pool="$(fit_pool "$POOL_API")"; cl_pool=""
   # ORDER：default＝免費→懲罰→兜底→訂閱→API；free＝只用免費的層；sub＝訂閱先，用盡才回免費的層，再 Claude 層，API 墊底
   local order free_main=""
@@ -1049,6 +1058,11 @@ run_job() {
           fi
           [ -e "$Q/.cancel/$id" ] && { rc=130; break; }
           echo "dcq[$id] best-of-N 沒有交件，照原階梯" >&2; continue
+        fi
+        # opencode free 層用完 → freepool 層（非 opencode 體系的免費直連），輪次重算；paid 仍 0，照樣有 FREE_ROUNDS 輪
+        if [ "$fp" = 0 ] && [ "$paid" = 0 ] && [ -n "$fp_pool" ]; then
+          fp=1; pool="$fp_pool"; tried=""; round=1
+          echo "dcq[$id] opencode free 層用盡（${pick%% *}），換 freepool 層：${fp_pool}" >&2; continue
         fi
         # 免費輪次用完，或免費模型全在冷卻 → 先把免費的層用完：懲罰層（免費累犯）→ 兜底層，
         # 訂閱層（opencode-go，2026-10-07 起付費）墊底（2026-10-13 使用者定）。paid＝已離開主免費層。
@@ -1482,19 +1496,21 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
 失敗就換下一隻，照「層」往下走。dcq＝多張工單的並發佇列；dc＝跑單張。
 
 ■ 派法（DCQ_ORDER，入列時寫進工單）
-  派o    default（預設）  免費層 → 懲罰層 → 兜底層 → 冷宮 → 訂閱層（opencode-go，扣 Go 額度）
+  派o    default（預設）  opencode free → freepool → 懲罰層 → 兜底層 → 冷宮 → 訂閱層（opencode-go，扣 Go 額度）
                           → API 層（只有 DCQ_ALLOW_API=1 才接，按量扣錢）
-  派of   free             只走免費的層（免費／懲罰／兜底／冷宮），全敗就失敗，不升訂閱
-  派os   sub              訂閱層先，用盡回免費的層，再 Claude 層（claude -p），API 墊底
+  派of   free             只走免費的層（opencode free／freepool／懲罰／兜底／冷宮），全敗就失敗，不升訂閱
+  派os   sub              訂閱層先，用盡回 opencode free → freepool → …，再 Claude 層（claude -p），API 墊底
   派deep （不經 dcq）      deep-run：OpenCode Go 訂閱的多步自主 agent，要沙箱外寫入／GH_TOKEN 時用
 
-■ 免費層＝一層混排，全部走 opencode run
-  成員：Zen（dc_id 無斜線，如 big-pickle）、opencode-go/*-free、google/、nvidia/、groq/、kilo/、openrouter/*:free。
-  不按 provider 分先後：autorank 依 logs/gaps.tsv 的「每 PASS 秒數＋貝氏平滑」整層重排（dcq rank 看）。
-  整層輪 DCQ_FREE_ROUNDS（預設 2）輪都敗、或全在冷卻，才往下一層。
-  懲罰層＝停滯率高的累犯；冷宮＝0 PASS；7 天沒新樣本假釋回免費層。兜底層＝omniroute/*（本機已空）。
+■ 免費分兩層，絕不混排（全部都由 opencode run 當外殼執行）
+  1 opencode free：OpenCode 自家的非訂閱免費模型——Zen（dc_id 無斜線，如 big-pickle）＋opencode-go/*-free。
+  2 freepool：非 opencode 體系的免費直連——kilo/、openrouter/*:free、google/、nvidia/、groq/。
+  1 整層輪 DCQ_FREE_ROUNDS（預設 2）輪都敗、或全在冷卻，才換 2；2 也一樣輪完才往下。
+  層內順序：autorank 依 logs/gaps.tsv 的「每 PASS 秒數＋貝氏平滑」排（dcq rank 看），樣本不足的照清冊列序。
+  懲罰層＝停滯率高的累犯；冷宮＝0 PASS；兩者在兩層之後，層內 opencode 的排前面；7 天沒新樣本假釋回原層。
+  兜底層＝omniroute/*（本機已空）。
 
-■ freepool 不是一層，是 kilo／openrouter 的免費保證閘
+■ freepool 層的免費保證閘（kilo／openrouter）
   兩家的零價名單每天會變。dc 派 kilo/*、openrouter/* 前讀上游價格目錄快取（24h，不打模型），
   現價非零或缺 :free 後綴就拒派；判不了也不派（fail-closed）。
   實打 kilo 只准 `freepool probe`（經 OmniRoute test-all 逐個、≤5 隻）：kilo 免 key 額度全帳號共用，

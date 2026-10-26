@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 fail=0
 o="$(bin/dcq help 2>&1)"; rc=$?
 [ "$rc" = 0 ] && echo "PASS help rc 0" || { echo "FAIL help rc=$rc"; fail=1; }
-for n in 派o 派of 派os 派deep "freepool 不是一層" "dcq add <task.md 絕對路徑>"; do
+for n in 派o 派of 派os 派deep "2 freepool：" "dcq add <task.md 絕對路徑>"; do
   case "$o" in *"$n"*) echo "PASS help 有「${n}」" ;; *) echo "FAIL help 缺「${n}」"; fail=1 ;; esac
 done
 bin/dcq >/dev/null 2>&1; rc=$?

@@ -122,7 +122,7 @@ which dc dcq wo-verify deep-lint opencode jq
 
 ## 用法
 
-`dcq help` 印整體觀念（派法 o／of／os／deep、層級順序、免費層混排、freepool 閘、正規流程、每日維護）再接指令用法。
+`dcq help` 印整體觀念（派法 o／of／os／deep、層級順序、免費兩層（opencode free → freepool）與 freepool 閘、正規流程、每日維護）再接指令用法。
 
 ```bash
 dc <task.md> [cwd] [-- <opencode run 原生旗標>...]

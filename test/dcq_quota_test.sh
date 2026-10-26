@@ -47,7 +47,7 @@ l=$(left @zen); ck "@zen 冷卻到 UTC 午夜（${l}s）" '[ "$l" -gt 0 ] && [ "
 ck "zen-a 不記 fail 計數" '[ ! -e "$H/zen-a.fails" ]'
 
 # 2. Google：RPD 冷卻該模型到太平洋午夜；RPM 只冷 QUOTA_RPM_COOL_S；限流記 upstream；普通 rc=1 照記 exit
-add j2 w2; run "google/g1 google/g2 kilo/k1 kilo/bad opencode-go/live-free"
+add j2 w2; run "google/g1 google/g2 kilo/k1 kilo/bad kilo/ok1"
 pt=$(TZ=America/Los_Angeles date +%H:%M:%S); IFS=: read -r h m s <<<"$pt"; want=$(( 86400 - (10#$h*3600 + 10#$m*60 + 10#$s) ))
 l=$(left google_g1); ck "google/g1 冷卻到太平洋午夜（${l}s≈${want}s）" '[ $(( want - l )) -ge -5 ] && [ $(( want - l )) -le 30 ]'
 l=$(left google_g2); ck "google/g2 RPM 只冷 ≤120s（${l}s）" '[ "$l" -gt 0 ] && [ "$l" -le 120 ]'

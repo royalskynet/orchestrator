@@ -131,11 +131,24 @@ grep -qx 'ORDER=default' "$DCQ_HOME/pending/$id.job" && ok "沒給 DCQ_ORDER 記
 out="$(env -u DCQ_ORDER DCQ_AUTORANK=0 dcq plan "$T/tasks/on.md" 2>&1)"
 if echo "$out" | grep -q '訂閱'; then ok "plan 沒給 DCQ_ORDER 列出訂閱層"; else bad "plan 沒給 DCQ_ORDER 沒列訂閱層：$out"; fi
 out="$(DCQ_ORDER=sub DCQ_AUTORANK=0 dcq plan "$T/tasks/os.md" 2>&1)"
-echo "$out" | grep -q '1 訂閱：opencode-go/g1' && echo "$out" | grep -q '2 免費：za' && ok "plan sub 順序與實跑一致" || bad "plan sub：$out"
+echo "$out" | grep -q '1 訂閱：opencode-go/g1' && echo "$out" | grep -q '2 免費 opencode：za' && ok "plan sub 順序與實跑一致" || bad "plan sub：$out"
 out="$(DCQ_ORDER=free DCQ_AUTORANK=0 dcq plan "$T/tasks/of.md" 2>&1)"
 if echo "$out" | grep -q '訂閱'; then bad "plan free 列出訂閱層：$out"; else ok "plan free 不列訂閱層"; fi
 DCQ_ORDER=x dcq add "$T/tasks/od.md" "$T/w1" mid >/dev/null 2>&1; [ $? = 2 ] && ok "亂給 DCQ_ORDER 拒收" || bad "亂給 DCQ_ORDER 沒拒收"
 unset DCQ_POOL_ZEN DCQ_POOL_TAIL
+
+# 5b) 免費層分兩層（10-26）：opencode free（無斜線＋opencode-go/*-free）先、freepool（其他斜線）後，不混排；
+#     手排把 kilo 放最前也一樣。za 失敗 → opencode-go/gf 過，kilo 沒被碰；opencode 全敗才輪到 kilo
+echo "# t1" > "$T/tasks/ft1.md"; echo "# t2" > "$T/tasks/ft2.md"
+: > "$TRACE"
+DCQ_MODELS="kilo/k:free za opencode-go/gf-free" DCQ_ORDER=free dcq add "$T/tasks/ft1.md" "$T/w1" mid >/dev/null 2>&1
+DCQ_MODELS="kilo/k:free za opencode-go/gf-free" DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 dcq run -j 1 >/dev/null 2>&1
+[ "$(grep '^IN ft1 ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "za opencode-go/gf-free " ] && ok "opencode free 層先於 freepool" || bad "兩層順序：$(grep '^IN ft1 ' "$TRACE")"
+DCQ_MODELS="kilo/k:free za" DCQ_ORDER=free dcq add "$T/tasks/ft2.md" "$T/w1" mid >/dev/null 2>&1
+DCQ_MODELS="kilo/k:free za" DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 dcq run -j 1 >/dev/null 2>&1
+[ "$(grep '^IN ft2 ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "za kilo/k:free " ] && ok "opencode free 用盡才換 freepool" || bad "換層：$(grep '^IN ft2 ' "$TRACE")"
+out="$(DCQ_MODELS="kilo/k:free za" DCQ_AUTORANK=0 dcq plan "$T/tasks/ft2.md" 2>&1)"
+echo "$out" | grep -q '1 免費 opencode：za$' && echo "$out" | grep -q '2 免費 freepool：kilo/k:free$' && ok "plan 分列兩層" || bad "plan 兩層：$out"
 
 # 6) bash 會把緊接在 $var 後的全形字當成變數名（set -u 下直接 unbound variable），一律要寫 ${var}
 bad_lines="$(perl -ne 'print "$ARGV:$.: $_" if /\$[A-Za-z_][A-Za-z0-9_]*(?=[\x80-\xff])/; close ARGV if eof' "$R"/bin/*)"
