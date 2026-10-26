@@ -379,6 +379,7 @@ JOBS_MAX=8
 ALLOW="${DCQ_ALLOWED_FAILS:-${DCQ_BREAK_N:-2}}"
 COOL_S="${DCQ_COOLDOWN_S:-${DCQ_BREAK_S:-120}}"
 MODEL_MAX="${DCQ_MODEL_MAX:-3}"      # 單一模型同時最多幾張；滿了就分給下一隻，不在忙的模型上排隊
+MODEL_MAX_OVR="${DCQ_MODEL_MAX_OVR-opencode-go/beam-free=4}"
 # watchdog：opencode 的 chunkTimeout 有洞（#43519 keepalive 歸零、#48675 零 chunk 卡住不報錯），
 # 所以外面再看一層「.out 多久沒長」。事件是 step 級不是 token 級（2026-10-02 實測），
 # 長推理的正常 step 本來就會靜默數分鐘 —— 門檻太緊會誤殺。2026-10-04 用 opencode.db 量過 longcat
@@ -593,6 +594,13 @@ cool_left() {
 # 再加一層 per-provider 槽 .inuse/@<provider>.<k>（上限見 PROV_MAX；沒列到的 provider 不設限）。
 # 先搶 provider 再搶 model，model 槽搶不到就把 provider 槽還回去。印「model槽 [provider槽]」。
 prov_of() { case "$1" in */*) echo "${1%%/*}" ;; *) echo zen ;; esac; }
+model_max() {  # $1=模型；在 MODEL_MAX_OVR 找 "模型=數字"，有就印那個數字，沒有就印 MODEL_MAX
+  local o
+  for o in $MODEL_MAX_OVR; do
+    [ "${o%%=*}" = "$1" ] && { echo "${o#*=}"; return 0; }
+  done
+  echo "$MODEL_MAX"
+}
 take_slot() {
   local k p pm="" ps="" kv
   p="$(prov_of "$1")"
@@ -605,7 +613,7 @@ take_slot() {
     for k in $(seq 1 "$pm"); do mkdir "$Q/.inuse/@$p.$k" 2>/dev/null && { ps="$Q/.inuse/@$p.$k"; break; }; done
     [ -n "$ps" ] || return 1
   fi
-  for k in $(seq 1 "$MODEL_MAX"); do
+  for k in $(seq 1 "$(model_max "$1")"); do
     mkdir "$Q/.inuse/$(fk "$1").$k" 2>/dev/null && { echo "$Q/.inuse/$(fk "$1").$k${ps:+ $ps}"; return 0; }
   done
   [ -z "$ps" ] || rmdir "$ps" 2>/dev/null
@@ -1453,7 +1461,7 @@ cmd_status() {
   local m left busy
   for m in $MODELS $POOL_PAID ${POOL_PEN:-} $POOL_TAIL ${POOL_ZERO:-} $POOL_API; do
     left=$(cool_left "$m"); busy=$(ls -1d "$Q/.inuse/$(fk "$m")".* 2>/dev/null | wc -l | tr -d ' ')
-    printf '  %-32s busy=%s/%s %s\n' "$m" "$busy" "$MODEL_MAX" "$([ "$left" -gt 0 ] && echo "cooling ${left}s" || echo ok)"
+    printf '  %-32s busy=%s/%s %s\n' "$m" "$busy" "$(model_max "$m")" "$([ "$left" -gt 0 ] && echo "cooling ${left}s" || echo ok)"
   done
   return 0
 }
@@ -1595,6 +1603,7 @@ usage() {
   DCQ_PROV_MAX       per-provider 併發上限，如 "zen=2 omniroute=3"（預設讀 providers.tsv）
   DCQ_FREE_ROUNDS    免費層整輪重試幾輪才升級訂閱層（預設 2）
   DCQ_MODEL_MAX      單一模型同時最多幾張（預設 3），滿了分給下一隻
+  DCQ_MODEL_MAX_OVR  單一模型併發上限覆寫，空白分隔的 "模型=數字"（預設 opencode-go/beam-free=4）
   DCQ_ALLOWED_FAILS  單一模型連續幾次上游失敗／停滯就冷卻（預設 2；舊名 DCQ_BREAK_N）
   DCQ_COOLDOWN_S     冷卻秒數（預設 120；舊名 DCQ_BREAK_S）
   DCQ_AUTORANK       1＝每次啟動依 logs/gaps.tsv 自動重排免費層（預設）；0＝照手排。`dcq rank` 看統計
