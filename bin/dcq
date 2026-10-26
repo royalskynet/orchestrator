@@ -734,6 +734,12 @@ cmd_plan() {
 }
 
 # --- add ---------------------------------------------------------------------
+runner_alive() {
+  local pid
+  pid="$(cat "$Q/.runner.pid" 2>/dev/null || true)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
 cmd_add() {
   local task="${1:-}" cwd="${2:-$PWD}" tier="${3:-${DCQ_TIER:-}}" order="${DCQ_ORDER:-default}"
   [ -n "$task" ] || die "用法：dcq add <task.md 絕對路徑> [cwd] [easy|mid|hard]"
@@ -764,6 +770,7 @@ cmd_add() {
   [ -n "${DCQ_JOB_MAX:-}" ] && echo "JOBMAX=$DCQ_JOB_MAX" >> "$Q/pending/$id.job"
   [ -n "${DCQ_SAT_N:-}" ] && echo "SAT=$DCQ_SAT_N" >> "$Q/pending/$id.job"
   echo "dcq: 難度 ${tier}，順序 $order" >&2
+  runner_alive || echo "dcq: 沒有 runner 在跑，請執行 dcq start -j 2" >&2
   echo "$id"
 }
 
@@ -1470,7 +1477,7 @@ cmd_start() {
 # wait 純 shell 睡眠迴圈、零 token：agent 用 run_in_background 跑它，結束時 harness 會叫回來。
 # 不給 id 就等 pending+running 全空。rc：0 全過、1 有 failed、124 逾時。
 cmd_wait() {
-  local tmo="${DCQ_WAIT_MAX:-3600}" ids=() t0 id left rc=0
+  local tmo="${DCQ_WAIT_MAX:-3600}" ids=() t0 id left rc=0 norunner_s="${DCQ_WAIT_NORUNNER_S:-60}" nr_start="" wp
   while [ $# -gt 0 ]; do
     case "$1" in --timeout) tmo="$2"; shift 2 ;; *) ids+=("$1"); shift ;; esac
   done
@@ -1485,6 +1492,24 @@ cmd_wait() {
       done
     fi
     [ "$left" = 0 ] && break
+    # 沒 runner 偵測
+    wp=0
+    if [ ${#ids[@]} -eq 0 ]; then
+      [ -n "$(ls "$Q"/pending/*.job 2>/dev/null)" ] && wp=1
+    else
+      for id in ${ids[@]+"${ids[@]}"}; do
+        [ -e "$Q/pending/$id.job" ] && { wp=1; break; }
+      done
+    fi
+    if [ "$wp" = 1 ] && ! runner_alive; then
+      [ -z "$nr_start" ] && nr_start="$(date +%s)"
+      if [ $(( $(date +%s) - nr_start )) -ge "$norunner_s" ]; then
+        echo "dcq wait: 沒有 runner 在跑，工單卡在 pending（dcq start -j 2）"
+        return 3
+      fi
+    else
+      nr_start=""
+    fi
     [ $(( $(date +%s) - t0 )) -ge "$tmo" ] && { echo "dcq wait: 逾時 ${tmo}s"; return 124; }
     sleep "${DCQ_POLL_S:-15}"
   done
@@ -1540,7 +1565,7 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
   2. DCQ_ORDER=<序> dcq plan <task.md>                       預覽難度與會走的層（不入列）
   3. DCQ_ORDER=<序> dcq add <task.md> <cwd> <plan 判的難度>   記下 job id
   4. dcq start -j N                                           tmux 背景跑
-  5. dcq wait <ids>                                           rc 0 全過／1 有失敗／124 逾時
+  5. dcq wait <ids>                                           rc 0 全過／1 有失敗／124 逾時／3 沒有 runner
   失敗看 dcq status 與 ~/.dcq/logs/。
 
 ■ 名單與每日維護
@@ -1565,7 +1590,7 @@ usage() {
   dcq doctor [--fix]                 免費池健檢：各 provider 數、被剔出的模型（壞＝exit 1，刻意關閉＝略過）；--fix 印 opencode.json 補丁
   dcq rank [easy|mid|hard]           免費層排名統計（給難度＝只算該難度＋舊紀錄）
   dcq cancel <job-id>                取消一張工單（殺掉整棵程序樹，階梯不重試，移到 failed）
-  dcq wait [id...] [--timeout S]     睡到這些工單結案（不給 id＝等佇列清空）；rc 0 全過／1 有失敗／124 逾時
+  dcq wait [id...] [--timeout S]     睡到這些工單結案（不給 id＝等佇列清空）；rc 0 全過／1 有失敗／124 逾時／3 沒有 runner
   dcq clear                          清空佇列與日誌
 
 環境變數：
@@ -1589,6 +1614,7 @@ usage() {
   DCQ_PROV_MAX       per-provider 併發上限，如 "zen=2 omniroute=3"（預設讀 providers.tsv）
   DCQ_FREE_ROUNDS    免費層整輪重試幾輪才升級訂閱層（預設 2）
   DCQ_MODEL_MAX      單一模型同時最多幾張（預設 3），滿了分給下一隻
+  DCQ_WAIT_NORUNNER_S  dcq wait 沒 runner 連續幾秒後放棄（預設 60）
   DCQ_ALLOWED_FAILS  單一模型連續幾次上游失敗／停滯就冷卻（預設 2；舊名 DCQ_BREAK_N）
   DCQ_COOLDOWN_S     冷卻秒數（預設 120；舊名 DCQ_BREAK_S）
   DCQ_AUTORANK       1＝每次啟動依 logs/gaps.tsv 自動重排免費層（預設）；0＝照手排。`dcq rank` 看統計
