@@ -616,6 +616,17 @@ not_in() {
 fit_pool() {
   case "${JOB_TIER:-}" in hard) not_in "$EASY_ONLY" "$1" ;; mid) not_in "$EASY_STRICT" "$1" ;; *) echo "$1" ;; esac
 }
+# $2 裡名稱含 $1（不分大小寫）的模型，保持順序、去重（派o <名稱>＝DCQ_PREFER）
+pref_hits() {
+  local k m o=""
+  k="$(printf %s "$1" | tr '[:upper:]' '[:lower:]')"
+  for m in $2; do
+    case "$(printf %s "$m" | tr '[:upper:]' '[:lower:]')" in *"$k"*)
+      case " $o " in *" $m "*) ;; *) o="$o${o:+ }$m" ;; esac ;; esac
+  done
+  echo "$o"
+}
+pref_ok() { case "$1" in *[!A-Za-z0-9._/:-]*) return 1 ;; esac; }
 # 從 $2 這個池挑下一隻：依序跳過「本單試過的」「冷卻中的」「槽滿的」。印：
 #   PICK <model> <slot>
 #   BUSY        有沒試過的但槽滿 —— 只是忙，等它讓出來
@@ -709,6 +720,7 @@ cmd_plan() {
   local order="${DCQ_ORDER:-default}" task tier ocbin="${DC_BIN:-$(dirname "$(readlink -f "$0")")}" n=0
   pool_summary; pool_alert
   case "$order" in default|free|sub) ;; *) die "DCQ_ORDER 只能是 default／free／sub：$order" ;; esac
+  [ -z "${DCQ_PREFER:-}" ] || pref_ok "$DCQ_PREFER" || die "DCQ_PREFER 只能含英數與 . _ / : -：$DCQ_PREFER"
   [ $# -gt 0 ] || die "用法：dcq plan <task.md>...（DCQ_ORDER=free|sub 換順序；預設 default）"
   for task in "$@"; do
     n=$((n + 1)); tier="${DCQ_TIER:-}"
@@ -717,6 +729,11 @@ cmd_plan() {
     local f p pe t z s a c
     case "$tier" in easy) f="$MODELS_easy" pe="$PEN_easy" z="$ZERO_easy" ;; hard) f="$MODELS_hard" pe="$PEN_hard" z="$ZERO_hard" ;; *) f="$MODELS_mid" pe="$PEN_mid" z="$ZERO_mid" ;; esac
     f="$(fit_pool "$f")"; pe="$(oc_first "$(fit_pool "$pe")")"; z="$(oc_first "$(fit_pool "$z")")"; t="$(fit_pool "$POOL_TAIL")"; s="$(fit_pool "$POOL_PAID")"; a="$(fit_pool "$POOL_API")"; c=""
+    if [ -n "${DCQ_PREFER:-}" ]; then
+      local ph; ph="$(oc_first "$(pref_hits "$DCQ_PREFER" "$f $pe $z")")"
+      if [ -n "$ph" ]; then f="$(not_in "$ph" "$f")"; pe="$(not_in "$ph" "$pe")"; z="$(not_in "$ph" "$z")"; echo "  0 優先「${DCQ_PREFER}」：$ph"
+      else echo "  ⚠ 優先「${DCQ_PREFER}」：免費層沒有名稱相符的模型，照原順序"; fi
+    fi
     [ "$order" = free ] && { s=""; a=""; }
     [ "$order" = sub ] && c="$(fit_pool "$POOL_CLAUDE")"
     echo "[$n] $(basename "$task")　難度 $tier"
@@ -757,13 +774,19 @@ cmd_add() {
   # 層級順序（觸發詞對應：派o＝default、派of＝free、派os＝sub）；沒給一律 default（預設＝派o，10-21 使用者定）：
   # 免費全敗會升到 opencode-go 訂閱層；只要免費的呼叫端自己帶 DCQ_ORDER=free
   case "$order" in default|free|sub) ;; *) die "DCQ_ORDER 只能是 default／free／sub：$order" ;; esac
+  [ -z "${DCQ_PREFER:-}" ] || pref_ok "$DCQ_PREFER" || die "DCQ_PREFER 只能含英數與 . _ / : -：$DCQ_PREFER"
   local id="$(date +%s)-$$-$(basename "${task%.md}")"
   printf 'TASK=%s\nCWD=%s\nTIER=%s\nORDER=%s\n' "$task" "$cwd" "$tier" "$order" > "$Q/pending/$id.job"
   [ -n "${DCQ_SPIN_S:-}" ] && echo "SPIN=$DCQ_SPIN_S" >> "$Q/pending/$id.job"   # 逐張關防空轉（唯讀工單帶 0）
   # 逐張預算（研究類長工單用，2026-10-21）：JOBMAX＝這張的總時限；SAT＝連續幾次嘗試 cwd 沒有新產出就停
   [ -n "${DCQ_JOB_MAX:-}" ] && echo "JOBMAX=$DCQ_JOB_MAX" >> "$Q/pending/$id.job"
   [ -n "${DCQ_SAT_N:-}" ] && echo "SAT=$DCQ_SAT_N" >> "$Q/pending/$id.job"
-  echo "dcq: 難度 ${tier}，順序 $order" >&2
+  if [ -n "${DCQ_PREFER:-}" ]; then
+    echo "PREFER=$DCQ_PREFER" >> "$Q/pending/$id.job"
+    [ -n "$(pref_hits "$DCQ_PREFER" "$MODELS_easy $MODELS_mid $MODELS_hard $PEN_easy $PEN_mid $PEN_hard $ZERO_easy $ZERO_mid $ZERO_hard")" ] \
+      || echo "dcq: ⚠ 優先「${DCQ_PREFER}」在免費層找不到相符模型，照原順序" >&2
+  fi
+  echo "dcq: 難度 ${tier}，順序 ${order}${DCQ_PREFER:+，優先 $DCQ_PREFER}" >&2
   echo "$id"
 }
 
@@ -1018,7 +1041,15 @@ run_job() {
   case "$JOB_TIER" in easy) pool="$MODELS_easy" pen_pool="$PEN_easy" zero_pool="$ZERO_easy" ;; hard) pool="$MODELS_hard" pen_pool="$PEN_hard" zero_pool="$ZERO_hard" ;;
     *) JOB_TIER=mid pool="$MODELS_mid" pen_pool="$PEN_mid" zero_pool="$ZERO_mid" ;; esac
   pool="$(fit_pool "$pool")"; pen_pool="$(oc_first "$(fit_pool "$pen_pool")")"; zero_pool="$(oc_first "$(fit_pool "$zero_pool")")"
-  fp_pool="$(fp_part "$pool")"; pool="$(oc_part "$pool")"
+  # PREFER：免費／懲罰／冷宮裡名稱相符的（opencode 先、freepool 後）排在免費層最前，跨 freepool 邊界不必等 opencode 層用盡；訂閱與 API 不動
+  local prefer ph=""
+  prefer="$(sed -n 's/^PREFER=//p' "$jobfile")"
+  if [ -n "$prefer" ]; then
+    ph="$(oc_first "$(pref_hits "$prefer" "$pool $pen_pool $zero_pool")")"
+    [ -z "$ph" ] || { pool="$(not_in "$ph" "$pool")"; pen_pool="$(not_in "$ph" "$pen_pool")"; zero_pool="$(not_in "$ph" "$zero_pool")"; }
+    echo "dcq[$id] 優先「${prefer}」：${ph:-（免費層無相符，照原順序）}" >&2
+  fi
+  fp_pool="$(fp_part "$pool")"; pool="$(echo $ph $(oc_part "$pool"))"
   tail_pool="$(fit_pool "$POOL_TAIL")"; paid_pool="$(fit_pool "$POOL_PAID")"; api_pool="$(fit_pool "$POOL_API")"; cl_pool=""
   # ORDER：default＝免費→懲罰→兜底→訂閱→API；free＝只用免費的層；sub＝訂閱先，用盡才回免費的層，再 Claude 層，API 墊底
   local order free_main=""
@@ -1584,6 +1615,9 @@ usage() {
   DCQ_TIER           dcq add 沒給難度時用這個（沒設＝mid）
   DCQ_TRIAGE         1＝沒給難度時問本機 Laya（bin/triage）判；預設 0 不問
   DCQ_ORDER          層級順序，入列時記進工單：free＝只用免費（派of）、default＝免費優先、全敗升訂閱（派o，未設時的預設）、sub＝訂閱優先（派os）
+  DCQ_PREFER         模型名稱關鍵字（子字串、不分大小寫），入列時記進工單：免費層（opencode、freepool、懲罰、冷宮）
+                     名稱相符的排最前（opencode 先、freepool 後），其餘照原順序 fallback；訂閱／API 不動；
+                     沒命中只警告照原順序（派o <名稱>，如 派o deepseek → DCQ_PREFER=deepseek）
   DCQ_EASY_ONLY      hard 工單不派的模型（預設＝清冊 fit=easy）
   DCQ_EASY_STRICT    mid／hard 都不派的模型（預設＝清冊 fit=easy-only）
   DCQ_PROV_MAX       per-provider 併發上限，如 "zen=2 omniroute=3"（預設讀 providers.tsv）

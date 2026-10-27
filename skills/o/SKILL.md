@@ -1,6 +1,6 @@
 ---
 name: o
-description: Orchestrator：把工單派給本機已知的各種 LLM（Zen 免費、opencode-go 訂閱、直連免費的 Kilo／NIM／Groq／Google AI Studio、付費 API）當執行人，依實測通過率與耗時智慧加權排序、多層 fallback；opencode CLI 當 agent 外殼，完工由 wo-verify 機械判定，exit code 反映驗收結果而非模型自述；多張工單用 dcq 併發跑（cwd 互斥、per-model 冷卻、停滯 watchdog），非免費模型發 TG 警示。說「派o」「派 o」「派工」時用；「派of」＝只用免費層、「派os」＝訂閱優先（底層指令是 dc／dcq；舊稱派dr／派drf／派drs 同義）；說「派deep」走 deepclaude 的 deep skill，不是這裡。需要沙箱外寫入、GH_TOKEN 或獨立 config 的由主 session 直接做，需 agent 多步自主時改派deep。
+description: Orchestrator：把工單派給本機已知的各種 LLM（Zen 免費、opencode-go 訂閱、直連免費的 Kilo／NIM／Groq／Google AI Studio、付費 API）當執行人，依實測通過率與耗時智慧加權排序、多層 fallback；opencode CLI 當 agent 外殼，完工由 wo-verify 機械判定，exit code 反映驗收結果而非模型自述；多張工單用 dcq 併發跑（cwd 互斥、per-model 冷卻、停滯 watchdog），非免費模型發 TG 警示。說「派o」「派 o」「派工」時用；「派of」＝只用免費層、「派os」＝訂閱優先、「派o <模型名>」＝該名稱的免費模型先派再照原順序（底層指令是 dc／dcq；舊稱派dr／派drf／派drs 同義）；說「派deep」走 deepclaude 的 deep skill，不是這裡。需要沙箱外寫入、GH_TOKEN 或獨立 config 的由主 session 直接做，需 agent 多步自主時改派deep。
 ---
 
 # Orchestrator（dc／dcq）＝多 LLM 執行人調度（免費優先、訂閱墊底），完成定義＝wo-verify 通過
@@ -66,6 +66,8 @@ dc <task.md> [cwd] [-- <opencode run 原生旗標>...]
 | 派o／派工 | 免費 → 懲罰 → 兜底 → 訂閱 → API（API 預設關） | `default` |
 | 派of | 只用免費的層；免費全敗就結案失敗，不升級 | `free` |
 | 派os | 訂閱先，用盡才回免費的層，API 墊底 | `sub` |
+
+指定模型（10-27 使用者定）：觸發詞後接名稱，如「派o deepseek」「派of glm」→ plan 與 add 都多帶 `DCQ_PREFER=<名稱>`。免費層（opencode、freepool、懲罰、冷宮）名稱含它（子字串、不分大小寫）的先派，opencode 先、freepool 後；全敗照原順序 fallback，訂閱／API 不動。plan 第 0 行列出命中的模型；沒命中只警告，照原順序跑。
 
 流程固定三步：
 1. 寫好工單後跑 `DCQ_ORDER=<順序> ~/dev/dispatch-router/bin/dcq plan <task.md>...`。它會用本機 Laya 判每張的難度（easy／mid／hard，零 token），印出會走的層和併發上限，不入列。hard 工單會跳過清冊 `fit=easy` 的模型。
