@@ -453,22 +453,22 @@ cool_upstream() {
 # 到某時區下一個 00:00 還有幾秒（BSD／GNU date 都吃 TZ=）
 to_midnight() { local h m s; IFS=: read -r h m s <<<"$(TZ="$1" date +%H:%M:%S)"; echo $(( 86400 - (10#$h * 3600 + 10#$m * 60 + 10#$s) )); }
 # 額度用完（issue #8／#10／#11）：冷卻到額度重置，不是固定 15 分鐘——白試只會再撞一次。
-# Zen「Free usage limit reached」一隻撞到＝整個 Zen 免費池都擋 → provider 級冷卻 .health/@zen.cool，但只冷 ZEN_QUOTA_COOL_S：
-# 10-24 起上游風控（session ID／請求特徵／CLI 版本）也回同一字串，不是每日額度（anomalyco/opencode#59280、#59252，
-# trefeon/pi-freeflow#118／#120），重置時間官方未公開；10-26 實例：M4 當天只打 2 次就被擋、冷到 UTC 午夜白停 9 小時。
+# Zen「Free usage limit reached」一隻撞到＝整個 Zen 免費池都擋 → provider 級冷卻 .health/@zen.cool，冷到 UTC 午夜（台北 08:00）：
+# 10-27 使用者查證 Zen 免費層確有每日限額、撞到要等 08:00 重置，10-26 改的 30 分短冷卻改回（短冷卻只會每半小時再撞一次）。
+# DCQ_ZEN_QUOTA_COOL_S 有設就改用固定秒數（測試或風控誤擋時用）。
 # Google AI Studio 免費層 RPD 按模型、太平洋時間午夜重置 → 該模型冷卻到那時；每分鐘窗口（RPM）只冷 QUOTA_RPM_COOL_S。
 # Go usage limit 只擋付費 Go 模型，*-free 照用（docs/go）→ 只冷該模型 QUOTA_GO_COOL_S。
 # ponytail: 冷卻狀態只在本機 ${Q}；多機共用同一出口 IP 時別台不知道（issue #10），要共用再把 @zen.cool 換成同步檔或 HTTP。
 QUOTA_GO_COOL_S="${DCQ_QUOTA_GO_COOL_S:-3600}"
 QUOTA_RPM_COOL_S="${DCQ_QUOTA_RPM_COOL_S:-120}"
-ZEN_QUOTA_COOL_S="${DCQ_ZEN_QUOTA_COOL_S:-1800}"
+ZEN_QUOTA_COOL_S="${DCQ_ZEN_QUOTA_COOL_S:-}"
 cool_quota() {  # $1=model $2=該次 .out
   local m="$1" k s
   if grep -q '^dc: 額度窗口＝每分鐘' "$2" 2>/dev/null; then k="$(fk "$m")"; s=$QUOTA_RPM_COOL_S
   else case "$m" in
     */*) k="$(fk "$m")"
          case "$m" in google/*) s=$(to_midnight America/Los_Angeles) ;; opencode-go/*) s=$QUOTA_GO_COOL_S ;; *) s=$UPSTREAM_COOL_S ;; esac ;;
-    *) k=@zen; s=$ZEN_QUOTA_COOL_S ;;
+    *) k=@zen; s=${ZEN_QUOTA_COOL_S:-$(to_midnight UTC)} ;;
   esac; fi
   echo $(( $(now) + s )) > "$Q/.health/$k.cool"; rm -rf "$Q/.health/$(fk "$m").fails"
   echo "dcq: 冷卻 $([ "$k" = @zen ] && echo 'Zen 免費池（整個 provider）' || echo "$m") —— 額度用完，${s}s 內不派" >&2
