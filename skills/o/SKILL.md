@@ -23,7 +23,7 @@ description: Orchestrator：把工單派給本機已知的各種 LLM（Zen 免�
 
 ## 任務檔
 
-**契約沿用舊 deep skill 的工單格式，全文在 `~/.claude/skills-disabled/deep/SKILL.md`，不在此重抄**（deep-lint／驗收 shell 區塊／「預期：」行／`## 禁止` 段／≤40 行）。
+**契約沿用舊 deep skill 的工單格式，全文在 `~/.claude/skills/deep/SKILL.md`，不在此重抄**（deep-lint／驗收 shell 區塊／「預期：」行／`## 禁止` 段／≤40 行）。
 
 dc 在派工前跑同一套閘門：`deep-lint` 不過就不派，`wo-verify <task.md> --dry`（旗標在檔名之後） 語法錯就不派。
 
@@ -146,7 +146,7 @@ dc <task.md> <cwd>; echo "rc=$?"   # 0 = 驗收重跑 K 次全過
 - **驗收在工作目錄底下跑**：斷言用相對路徑，在呼叫端 cwd 跑會誤判 FAIL。dc 已處理。
 - **免費端點會突然掛**：實測 `ling-3.0-flash-fin-free` 回 `Upstream unavailable`。dc 不做自動 fallback，失敗就回報，換模型由呼叫端決定。
 - **模型很慢**：免費池的帳單是 wall-clock 不是 token。單一函式小修 17–20 秒，兩個函式加約束 4 分鐘。長任務不要用 dc。
-- **`504 Upstream idle timeout exceeded` 的根因是單輪閒置，不是總時長**（2026-09-30 實測：7 步工單死在 step 4 的 `uv venv`／`uv pip install`）。對策見上面五條第 1、2 點，不要靠重試硬碰。
+- **`504 Upstream idle timeout exceeded` 的根因是單輪閒置，不是總時長**（2026-09-30 實測：7 步工單死在 step 4 的 `uv venv`／`uv pip install`）。對策見上面六條第 1、2 點，不要靠重試硬碰。
 - **實測穩定度**（2026-09-30，經 zen_shim CLI 路徑，PONG 往返）：`big-pickle` 3.5–4.4s、`zen-space-bunny` 2.5–3.5s、`zen-nemotron` 4–20s，三輪全過；同時段走 OmniRoute 的 `auto/best-free` 三輪全掛、`free-tools` 21–47s 且間歇回 `[404]: 0 endpoints out of 9 requested`。**走 CLI 的穩，走 OmniRoute 的不穩。**
 
 ## 不做
