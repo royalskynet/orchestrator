@@ -79,6 +79,7 @@ MODELS="${DCQ_MODELS:-$POOL_ZEN${POOL_GO:+ $POOL_GO}}"
 RANK_MIN="${DCQ_RANK_MIN:-10}"; RANK_WIN="${DCQ_RANK_WIN:-30}"; RANK_STALL_PCT="${DCQ_RANK_STALL_PCT:-30}"
 RANK_ZERO_N="${DCQ_RANK_ZERO_N:-3}"   # 設 0＝停用短路
 RANK_PRIOR_K="${DCQ_RANK_PRIOR_K:-2}"   # 貝氏平滑的虛擬嘗試數；0＝原始 s/pass
+RANK_OUTAGE_N="${DCQ_RANK_OUTAGE_N:-3}"   # 同 10 分鐘桶有幾隻別的模型出事就當全池故障；設很大＝停用
 # 週探測（oc-probe/：launchd 06:00 的 oc-probe daily 每 7 天跑一次 oc-free-check --tsv）：只用最新一批、且 ≤PROBE_MAX_H 小時。
 #   - 探測非 OK → 移到免費層最後（比 zero/demoted 更後；明天探測回 OK 就自己回來）
 #   - 樣本不足（manual）的位置裡依探測秒數排序，沒探測資料的排在有資料的後面
@@ -95,18 +96,23 @@ rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計�
   local cut; cut="$(date -v-"${PROBE_MAX_H}"H +%F_%T 2>/dev/null || date -d "-${PROBE_MAX_H} hours" +%F_%T)"
   local pc; pc="$(date -v-"${RANK_PAROLE_D}"d +%F_%T 2>/dev/null || date -d "-${RANK_PAROLE_D} days" +%F_%T)"
   awk -F'\t' -v order="$1" -v min="$RANK_MIN" -v win="$RANK_WIN" -v sp="$RANK_STALL_PCT" \
-      -v zn="$RANK_ZERO_N" -v mode="${2:-order}" -v pf="$pf" -v cut="$cut" -v pc="$pc" -v stall="${STALL_S:-200}" -v tier="${3:-}" -v pk="$RANK_PRIOR_K" '
+      -v zn="$RANK_ZERO_N" -v mode="${2:-order}" -v pf="$pf" -v cut="$cut" -v pc="$pc" -v stall="${STALL_S:-200}" -v tier="${3:-}" -v pk="$RANK_PRIOR_K" -v ob="$RANK_OUTAGE_N" '
     # QUOTA＝額度用完（08:00 重置），不是壞，當沒資料
     FILENAME==pf { if ($1>=cut && $4!="QUOTA") { if ($1>pl) pl=$1; PT[$1,$3]=PT[$1,$3] (PT[$1,$3]=="" ? "" : ",") $4 ":" $5 } next }
+    # 全池故障（10-27）：同一個 10 分鐘桶裡出事（quota／upstream／卡住）的不同模型數，跨難度算。
+    # 10-25 03:58–05:13 Zen 全 quota、Go 訂閱全掛，opencode-go/beam-free 那段卡 8 次被算成自己停滯 80% 降懲罰層。
+    $5~/^(quota|upstream|stall|slow|spin)$/ { bk=substr($1,1,15); if (!((bk,$2) in BM)) { BM[bk,$2]=1; NB[bk]++ } }
     # 第 7 欄＝工單難度（2026-10-19 起）：別的難度的紀錄不算；舊紀錄沒有這欄，算進每個難度
     tier!="" && $7!="" && $7!=tier { next }
     $4==0 && $3+0>pgmax { pgmax=$3+0; pgm=$2 }
-    { m=$2; LT[m]=$1; k=++cnt[m]; R[m,k]=$4; W[m,k]=$5; D[m,k]=($6!="" ? $6 : $3); if ($4==0) LP[m]=$1 }
+    { m=$2; LT[m]=$1; k=++cnt[m]; R[m,k]=$4; W[m,k]=$5; D[m,k]=($6!="" ? $6 : $3); BK[m,k]=substr($1,1,15); if ($4==0) LP[m]=$1 }
     END {
       nm=split(order, L, " ")
       for (i=1; i<=nm; i++) {
         m=L[i]; n=0; p=0; s=0; d=0; st=cnt[m]-win+1; if (st<1) st=1
-        for (k=st; k<=cnt[m]; k++) { if (R[m,k]==2 || W[m,k]=="upstream" || W[m,k]=="quota") continue; n++; d+=D[m,k]; if (R[m,k]==0) p++; if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin") s++ }
+        for (k=st; k<=cnt[m]; k++) { if (R[m,k]==2 || W[m,k]=="upstream" || W[m,k]=="quota") continue
+          if (W[m,k]~/^(stall|slow|spin)$/ && NB[BK[m,k]]-1>=ob) continue   # 同桶 ≥ob 隻別的模型也出事＝上游故障
+          n++; d+=D[m,k]; if (R[m,k]==0) p++; if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin") s++ }
         N[i]=n; P[i]=p; S[i]=s; DS[i]=d; pr[i]=(n ? p/n : 0); tn+=n; tp+=p; td+=d
       }
       # 貝氏平滑（2026-10-22）：每隻先加 pk 次「全池平均」的虛擬嘗試（平均秒數 mu_d、平均通過率 mu_p），
@@ -373,6 +379,7 @@ JOBS_MAX=8
 ALLOW="${DCQ_ALLOWED_FAILS:-${DCQ_BREAK_N:-2}}"
 COOL_S="${DCQ_COOLDOWN_S:-${DCQ_BREAK_S:-120}}"
 MODEL_MAX="${DCQ_MODEL_MAX:-3}"      # 單一模型同時最多幾張；滿了就分給下一隻，不在忙的模型上排隊
+MODEL_MAX_OVR="${DCQ_MODEL_MAX_OVR-opencode-go/beam-free=4}"  # 單一模型覆寫，空白分隔的 模型=數字
 # watchdog：opencode 的 chunkTimeout 有洞（#43519 keepalive 歸零、#48675 零 chunk 卡住不報錯），
 # 所以外面再看一層「.out 多久沒長」。事件是 step 級不是 token 級（2026-10-02 實測），
 # 長推理的正常 step 本來就會靜默數分鐘 —— 門檻太緊會誤殺。2026-10-04 用 opencode.db 量過 longcat
@@ -587,6 +594,15 @@ cool_left() {
 # 再加一層 per-provider 槽 .inuse/@<provider>.<k>（上限見 PROV_MAX；沒列到的 provider 不設限）。
 # 先搶 provider 再搶 model，model 槽搶不到就把 provider 槽還回去。印「model槽 [provider槽]」。
 prov_of() { case "$1" in */*) echo "${1%%/*}" ;; *) echo zen ;; esac; }
+model_max() {  # $1=model；在 MODEL_MAX_OVR 找 $1=，有就印那個數字，沒有就印 MODEL_MAX
+  local ovr
+  for ovr in $MODEL_MAX_OVR; do
+    case "$ovr" in
+      "$1"=*) echo "${ovr#*=}"; return 0 ;;
+    esac
+  done
+  echo "$MODEL_MAX"
+}
 take_slot() {
   local k p pm="" ps="" kv
   p="$(prov_of "$1")"
@@ -599,7 +615,7 @@ take_slot() {
     for k in $(seq 1 "$pm"); do mkdir "$Q/.inuse/@$p.$k" 2>/dev/null && { ps="$Q/.inuse/@$p.$k"; break; }; done
     [ -n "$ps" ] || return 1
   fi
-  for k in $(seq 1 "$MODEL_MAX"); do
+  for k in $(seq 1 "$(model_max "$1")"); do
     mkdir "$Q/.inuse/$(fk "$1").$k" 2>/dev/null && { echo "$Q/.inuse/$(fk "$1").$k${ps:+ $ps}"; return 0; }
   done
   [ -z "$ps" ] || rmdir "$ps" 2>/dev/null
@@ -751,6 +767,12 @@ cmd_plan() {
 }
 
 # --- add ---------------------------------------------------------------------
+runner_alive() {
+  local pid
+  pid="$(cat "$Q/.runner.pid" 2>/dev/null || true)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
 cmd_add() {
   local task="${1:-}" cwd="${2:-$PWD}" tier="${3:-${DCQ_TIER:-}}" order="${DCQ_ORDER:-default}"
   [ -n "$task" ] || die "用法：dcq add <task.md 絕對路徑> [cwd] [easy|mid|hard]"
@@ -787,6 +809,7 @@ cmd_add() {
       || echo "dcq: ⚠ 優先「${DCQ_PREFER}」在免費層找不到相符模型，照原順序" >&2
   fi
   echo "dcq: 難度 ${tier}，順序 ${order}${DCQ_PREFER:+，優先 $DCQ_PREFER}" >&2
+  runner_alive || echo "dcq: 沒有 runner 在跑，請執行 dcq start -j 2" >&2
   echo "$id"
 }
 
@@ -1478,7 +1501,7 @@ cmd_status() {
   local m left busy
   for m in $MODELS $POOL_PAID ${POOL_PEN:-} $POOL_TAIL ${POOL_ZERO:-} $POOL_API; do
     left=$(cool_left "$m"); busy=$(ls -1d "$Q/.inuse/$(fk "$m")".* 2>/dev/null | wc -l | tr -d ' ')
-    printf '  %-32s busy=%s/%s %s\n' "$m" "$busy" "$MODEL_MAX" "$([ "$left" -gt 0 ] && echo "cooling ${left}s" || echo ok)"
+    printf '  %-32s busy=%s/%s %s\n' "$m" "$busy" "$(model_max "$m")" "$([ "$left" -gt 0 ] && echo "cooling ${left}s" || echo ok)"
   done
   return 0
 }
@@ -1501,7 +1524,7 @@ cmd_start() {
 # wait 純 shell 睡眠迴圈、零 token：agent 用 run_in_background 跑它，結束時 harness 會叫回來。
 # 不給 id 就等 pending+running 全空。rc：0 全過、1 有 failed、124 逾時。
 cmd_wait() {
-  local tmo="${DCQ_WAIT_MAX:-3600}" ids=() t0 id left rc=0
+  local tmo="${DCQ_WAIT_MAX:-3600}" ids=() t0 id left rc=0 norunner_s="${DCQ_WAIT_NORUNNER_S:-60}" nr_start="" wp
   while [ $# -gt 0 ]; do
     case "$1" in --timeout) tmo="$2"; shift 2 ;; *) ids+=("$1"); shift ;; esac
   done
@@ -1516,6 +1539,24 @@ cmd_wait() {
       done
     fi
     [ "$left" = 0 ] && break
+    # 沒 runner 偵測
+    wp=0
+    if [ ${#ids[@]} -eq 0 ]; then
+      [ -n "$(ls "$Q"/pending/*.job 2>/dev/null)" ] && wp=1
+    else
+      for id in ${ids[@]+"${ids[@]}"}; do
+        [ -e "$Q/pending/$id.job" ] && { wp=1; break; }
+      done
+    fi
+    if [ "$wp" = 1 ] && ! runner_alive; then
+      [ -z "$nr_start" ] && nr_start="$(date +%s)"
+      if [ $(( $(date +%s) - nr_start )) -ge "$norunner_s" ]; then
+        echo "dcq wait: 沒有 runner 在跑，工單卡在 pending（dcq start -j 2）"
+        return 3
+      fi
+    else
+      nr_start=""
+    fi
     [ $(( $(date +%s) - t0 )) -ge "$tmo" ] && { echo "dcq wait: 逾時 ${tmo}s"; return 124; }
     sleep "${DCQ_POLL_S:-15}"
   done
@@ -1571,7 +1612,7 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
   2. DCQ_ORDER=<序> dcq plan <task.md>                       預覽難度與會走的層（不入列）
   3. DCQ_ORDER=<序> dcq add <task.md> <cwd> <plan 判的難度>   記下 job id
   4. dcq start -j N                                           tmux 背景跑
-  5. dcq wait <ids>                                           rc 0 全過／1 有失敗／124 逾時
+  5. dcq wait <ids>                                           rc 0 全過／1 有失敗／124 逾時／3 沒有 runner
   失敗看 dcq status 與 ~/.dcq/logs/。
 
 ■ 名單與每日維護
@@ -1596,7 +1637,7 @@ usage() {
   dcq doctor [--fix]                 免費池健檢：各 provider 數、被剔出的模型（壞＝exit 1，刻意關閉＝略過）；--fix 印 opencode.json 補丁
   dcq rank [easy|mid|hard]           免費層排名統計（給難度＝只算該難度＋舊紀錄）
   dcq cancel <job-id>                取消一張工單（殺掉整棵程序樹，階梯不重試，移到 failed）
-  dcq wait [id...] [--timeout S]     睡到這些工單結案（不給 id＝等佇列清空）；rc 0 全過／1 有失敗／124 逾時
+  dcq wait [id...] [--timeout S]     睡到這些工單結案（不給 id＝等佇列清空）；rc 0 全過／1 有失敗／124 逾時／3 沒有 runner
   dcq clear                          清空佇列與日誌
 
 環境變數：
@@ -1623,6 +1664,8 @@ usage() {
   DCQ_PROV_MAX       per-provider 併發上限，如 "zen=2 omniroute=3"（預設讀 providers.tsv）
   DCQ_FREE_ROUNDS    免費層整輪重試幾輪才升級訂閱層（預設 2）
   DCQ_MODEL_MAX      單一模型同時最多幾張（預設 3），滿了分給下一隻
+  DCQ_WAIT_NORUNNER_S  dcq wait 沒 runner 連續幾秒後放棄（預設 60）
+  DCQ_MODEL_MAX_OVR  單一模型覆寫上限，空白分隔的 模型=數字（預設 opencode-go/beam-free=4）
   DCQ_ALLOWED_FAILS  單一模型連續幾次上游失敗／停滯就冷卻（預設 2；舊名 DCQ_BREAK_N）
   DCQ_COOLDOWN_S     冷卻秒數（預設 120；舊名 DCQ_BREAK_S）
   DCQ_AUTORANK       1＝每次啟動依 logs/gaps.tsv 自動重排免費層（預設）；0＝照手排。`dcq rank` 看統計
