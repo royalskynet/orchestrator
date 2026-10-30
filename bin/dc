@@ -75,6 +75,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --agent) agent="${2:?--agent 需要值}"; shift 2 ;;
     --) shift; break ;;
+    -h|--help) awk 'NR<3 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "dc: 未知選項 ${1}（要傳給 opencode run 的用 -- 隔開）" >&2; exit 2 ;;
     *) [ -z "$f" ] && f="$1" || d="$1"; shift ;;
   esac
@@ -376,7 +377,15 @@ _wt_benign_advance() {
   [ "$h0" != "$h1" ] && [ -n "$h0" ] && [ -n "$h1" ] || return 1
   git -C "$w" merge-base --is-ancestor "$h0" "$h1" 2>/dev/null || return 1
   n="$(git -C "$w" log --format=%cn "$h0..$h1" 2>/dev/null | grep -vc '^dcq$')"
-  [ "$n" = 0 ]
+  [ "$n" = 0 ] && return 0
+  # 10-28：工單叫模型自己 commit 時，dcq 的 merge 是 fast-forward，不產生 committer=dcq 的 commit，
+  # 上一條認不出來（catalog-sync 那張被同批 sibling 合回誤判 FATAL）。改看主 checkout 的 HEAD reflog：
+  # 從 h1 往回到 h0，每一筆都是 `merge dcq/<id>`＝全是 dcq 合回。模型在主 checkout 自己 commit 的是 `commit:`，照判越界。
+  git -C "$w" reflog --format='%H %gs' HEAD 2>/dev/null | awk -v h0="$h0" -v h1="$h1" '
+    NR==1 && $1!=h1 {exit}
+    $1==h0 {ok=1; exit}
+    $2!="merge" || $3!~/^dcq\// {exit}
+    END {exit !ok}'
 }
 wt_before="$(_wt_snap)"
 
@@ -428,7 +437,21 @@ case "$m" in claude/*) ocrun=("$(dirname "$(readlink -f "$0")")/claude-exec") ;;
 # 禁止 API 直打（Zen 免費閘認 opencode 客戶端，直打會被判濫用鎖 IP）。以後誰改執行器都要先過這道閘；test/oc_cli_only_test.sh 守。
 case "$m" in */*) case "$m" in opencode/*|opencode-go/*-free) ocfree=1 ;; *) ocfree=0 ;; esac ;; *) ocfree=1 ;; esac
 [ "$ocfree" = 1 ] && [ "${ocrun[*]}" != "opencode run" ] && { echo "dc: 中止——opencode free 模型只准經 opencode CLI 呼叫（${m}），禁止 API" >&2; exit 2; }
-{ cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" "${ocrun[@]}" \
+# 第三方模型的執行人禁讀對話紀錄與憑證（fixindex 11507：換 HOME／opencode permission 都擋不住 shell 絕對路徑）。
+# claude-exec 要寫自己的 transcript，不套；.local/share/opencode 是 --standalone 必讀，不擋。DC_SANDBOX=0 關。
+sbx=()
+if [ "${ocrun[*]}" = "opencode run" ] && [ "${DC_SANDBOX:-1}" != 0 ] && command -v sandbox-exec >/dev/null; then
+  _r="$(cd "$HOME" && pwd -P)"
+  # opencode.json 的 {file:~/.creds/kv/X.txt} 是 opencode 自己啟動要讀的 provider key，逐檔放行（只限 kv/ 下、只讀）；
+  # 全擋會讓每隻模型都報「Configuration is invalid … bad file reference」（2026-10-28 全池失敗）。
+  _ok=""
+  for _f in $(grep -ho '{file:[^}]*}' "${OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}" 2>/dev/null | sed 's/^{file://; s/}$//' | sort -u); do
+    case "$_f" in "~/"*) _f="$_r/${_f#\~/}" ;; "$HOME/"*) _f="$_r/${_f#"$HOME"/}" ;; esac
+    case "$_f" in *..*) ;; "$_r/.creds/kv/"*.txt) _ok="$_ok (literal \"$_f\")" ;; esac
+  done
+  sbx=(sandbox-exec -p "(version 1)(allow default)(deny file-read* file-write* (subpath \"$_r/.claude/projects\") (subpath \"$_r/.creds\") (subpath \"$_r/.ssh\"))${_ok:+(allow file-read*$_ok)}")
+fi
+{ cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" ${sbx[@]+"${sbx[@]}"} "${ocrun[@]}" \
   "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。
 驗收區塊在派工前已被複製釘住並逐行比對：改它只會判 exit 3 篡改，不可能讓你過關。
@@ -461,6 +484,8 @@ wait "$teepid"
 rc=$(cat "$rcf" 2>/dev/null || echo 1)
 # Zen／Go 額度錯誤 opencode 自己 1 秒內就結束，輪詢迴圈常來不及看到
 [ "$rl" = 0 ] && grep -q -E "$QUOTA_RE" "$out" 2>/dev/null && rl=5
+# 型錄沒有這隻也是秒退 rc=1，同樣補查（套 sandbox-exec 後啟動時序變，迴圈常漏看，10-28）
+[ "$rl" = 0 ] && grep -q -E "$UA_RE" "$out" 2>/dev/null && rl=2
 # 比在所有其他判定之前：越界與成敗無關，PASS 的工單一樣可能寫壞別的 worktree。
 # exit 2 讓 dcq 走 FATAL 不重試——換模型重跑只會再污染一次。
 drift="$(_wt_snap | while read -r w h1 s1; do

@@ -1605,7 +1605,7 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
   併發探測會整批回 Free usage limit reached。
 
 ■ 難度與 fit
-  dcq plan 由本機 Laya 判 easy／mid／hard。清冊 fit 欄：any 全派；easy＝hard 不派；easy-only＝只派 easy。
+  dcq plan 沒給難度預設 mid；DCQ_TRIAGE=1 才由本機 Laya 判 easy／mid／hard。清冊 fit 欄：any 全派；easy＝hard 不派；easy-only＝只派 easy。
 
 ■ 正規流程
   1. 寫工單：單步、冪等、輸入給絕對路徑、含驗收區塊
@@ -1628,7 +1628,7 @@ usage() {
   cat <<'EOF'
 用法：
   dcq add <task.md 絕對路徑> [cwd] [easy|mid|hard]
-                                     入列（跑 deep-lint + wo-verify --dry 准入閘）；沒給難度就由本機 Laya 判（bin/triage）
+                                     入列（跑 deep-lint + wo-verify --dry 准入閘）；沒給難度預設 mid；DCQ_TRIAGE=1 才由本機 Laya 判（bin/triage）
   dcq run [-j N]                     起 N 個 slot 併發跑到 pending 清空（預設 4，上限 8）
   dcq start [-j N]                   同 run，但放進獨立 tmux 脫離呼叫端（從 agent session 派工用這個）
   dcq status                         各狀態計數與失敗清單

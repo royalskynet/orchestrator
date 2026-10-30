@@ -73,6 +73,9 @@ def apply(lines, add_zen, add_gofree, add_sub, rm, source, today):
 
 
 def main(argv):
+    if "-h" in argv[1:] or "--help" in argv[1:]:
+        print(__doc__)
+        return 0
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
         return 2

@@ -52,7 +52,7 @@ free	opencode-run	groq/openai/gpt-oss-20b	ok	dc pong PASS 57s（M4 10-25）	Groq
 free	opencode-run	groq/openai/gpt-oss-120b	flaky	dc pong 失敗：Request too large，TPM Limit 8000 Requested 8051（10-25）	Groq 免費方案塞不下 opencode 的請求；不派		any
 free	opencode-run	groq/qwen/qwen3.8-27b	flaky	dc pong 240s 逾時（10-25）	Groq 免費方案；不派		any
 free	opencode-run	google/gemini-3.6-flash	ok	opencode run 1/1 OK 2s；tool_call OK（10-24）	AI Studio 免費層；10-24 加，依能力手排，之後交 autorank	google/gemini-3.6-flash	any
-free	opencode-run	google/gemini-3.5-flash	ok	curl tool_call OK 1.6s（10-24）	AI Studio 免費層；10-24 加，依能力手排，之後交 autorank	google/gemini-3.5-flash	any
+free	opencode-run	google/gemini-3.5-flash	ok	curl tool_call OK 1.6s（10-24）	AI Studio 免費層；10-24 加，依能力手排，之後交 autorank；429 可能記在 gemini-3.6-flash 名下，疑共用額度（#11，docs/issue-11-model-map.md）	google/gemini-3.5-flash	any
 free	opencode-run	kilo/nvidia/nemotron-3-ultra-550b-a55b:free	ok	opencode run 1/1 OK 26s；tool_call OK（10-24）	Kilo 免 key（底層 OpenRouter :free）；10-24 加，依能力手排，之後交 autorank	kilo/nvidia/nemotron-3-ultra-550b-a55b:free	any
 free	opencode-run	google/gemini-3-flash-preview	ok	curl tool_call OK 1.2s（10-24）	AI Studio 免費層；preview；10-24 加，依能力手排，之後交 autorank	google/gemini-3-flash-preview	any
 free	opencode-run	kilo/poolside/laguna-s-2.1:free	ok	curl tool_call OK 3.1s（10-24）	Kilo 免 key；上游 Poolside 忙時 429；10-24 加，依能力手排，之後交 autorank	kilo/poolside/laguna-s-2.1:free	any

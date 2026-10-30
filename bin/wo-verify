@@ -15,6 +15,16 @@ set -u
 # 全身包進 main()：bash 一次解析完整個函式才執行，工單就地改寫本檔時剩下的腳本
 # 不會依舊位元組偏移續讀而錯位（fix-store 9499）。
 main() {
+case "${1:-}" in
+  -h|--help)
+    awk 'NR==1 && /^#!/ { next } /^#/ { sub(/^# /, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
+    exit 0
+    ;;
+  --dry|--dump|--pinned)
+    echo "旗標要放在檔名之後：wo-verify <WO.md> --dry" >&2
+    exit 2
+    ;;
+esac
 wo="${1:?用法: wo-verify <WO.md> [--dry|--dump|--pinned <script>]}"; dry=0; [ "${2:-}" = "--dry" ] && dry=1
 pin=""; [ "${2:-}" = "--pinned" ] && pin="${3:?--pinned 需要 pin 腳本路徑}"
 [ -f "$wo" ] || { echo "wo-verify: 檔案不存在 $wo"; exit 2; }

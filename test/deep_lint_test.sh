@@ -454,4 +454,16 @@ case "$out" in
   *) echo "FAIL: date +%F 誤報 — $out"; rc=1 ;;
 esac
 
+# 綁死 HEAD (fix 11496)
+for l in "git log -1 --format=%s | grep -q x" "git -C /r log -n 1 --format=%B | grep -q x" "git show --name-only HEAD | grep -q x" "git diff --name-only HEAD~1 | grep -q x"; do
+  printf '# 測試用工單\n## 任務\n完成 fixture。\n## 驗收\n```bash\n%s\n```\n預期：rc=0。\n## 禁止\n- 禁止改 fixture。\n' "$l" > "$tmp/head-bad.md"
+  out=$("$HERE/deep-lint" "$tmp/head-bad.md" 2>&1)
+  case "$out" in *'fix 11496'*) echo "ok: 綁 HEAD→警告 ($l)" ;; *) echo "FAIL: 綁 HEAD 未警告 ($l) — $out"; rc=1 ;; esac
+done
+for l in "git log --format=%s -20 | grep -q x" "git diff --stat | grep -q x" "git log -10 --format=%s | grep -q x"; do
+  printf '# 測試用工單\n## 任務\n完成 fixture。\n## 驗收\n```bash\n%s\n```\n預期：rc=0。\n## 禁止\n- 禁止改 fixture。\n' "$l" > "$tmp/head-good.md"
+  out=$("$HERE/deep-lint" "$tmp/head-good.md" 2>&1)
+  case "$out" in *'fix 11496'*) echo "FAIL: 綁 HEAD 誤報 ($l) — $out"; rc=1 ;; *) echo "ok: 不誤報 ($l)" ;; esac
+done
+
 exit "$rc"

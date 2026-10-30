@@ -7,6 +7,8 @@
 #   3) 被別的 dc 持鎖的 sibling 有變化 → 不算越界（併發派工本來就會改它）
 #   4) I3a（10-23）：主 checkout 被 dcq 的 sibling merge 前進（新 commit 全是 committer=dcq）→ 不算越界；
 #      模型自己 commit（committer 不是 dcq）或動工作樹 → 仍判越界。10-22 批次 R7／R10／R11 因此誤判 FATAL
+#   5) 10-28：sibling 的 commit 是模型做的、dcq 只 fast-forward 合回 dcq/<id> → 不算越界；
+#      ff 合的不是 dcq/ 分支 → 仍判越界。catalog-sync 那張因此誤判 FATAL
 set -u
 . "$(dirname "$0")/env.sh"
 OC="$(cd "$(dirname "$0")/.." && pwd)/bin/dc"
@@ -29,6 +31,7 @@ cat > "$T/bin/opencode" <<'EOF'
 #!/usr/bin/env bash
 [ -n "${FAKE_TARGET:-}" ] && echo x > "$FAKE_TARGET"
 [ -n "${FAKE_COMMIT_AS:-}" ] && git -C "$FAKE_COMMIT_REPO" -c user.email=t@t -c user.name="$FAKE_COMMIT_AS" commit -q --allow-empty -m sib
+[ -n "${FAKE_FF:-}" ] && git -C "$FAKE_COMMIT_REPO" merge -q --ff-only "$FAKE_FF"
 exit 0
 EOF
 chmod +x "$T/bin/opencode"
@@ -57,5 +60,17 @@ FAKE_COMMIT_REPO="$T/main" FAKE_COMMIT_AS=dcq "$OC" "$T/t.md" "$T/wt" >"$T/o4" 2
 chk "sibling(dcq) merge 讓主 checkout 前進不算越界 rc=0" "$rc" "0"
 FAKE_COMMIT_REPO="$T/main" FAKE_COMMIT_AS=model "$OC" "$T/t.md" "$T/wt" >"$T/o5" 2>&1; rc=$?
 chk "非 dcq 的 commit 進主 checkout 仍判越界 rc=2" "$rc" "2"
+
+# 5) fast-forward 合回模型 commit 的 dcq/<id> 分支
+for b in dcq/ff wo/ff; do
+  git -C "$T/main" branch -q "$b"
+  git -C "$T/main" worktree add -q "$T/$(echo "$b" | tr / _)" "$b"
+  git -C "$T/$(echo "$b" | tr / _)" -c user.email=t@t -c user.name=model commit -q --allow-empty -m "model on $b"
+done
+FAKE_COMMIT_REPO="$T/main" FAKE_FF=dcq/ff "$OC" "$T/t.md" "$T/wt" >"$T/o6" 2>&1; rc=$?
+chk "dcq/ 分支 ff 合回（模型 commit）不算越界 rc=0" "$rc" "0"
+git -C "$T/wo_ff" rebase -q dcq/ff 2>/dev/null
+FAKE_COMMIT_REPO="$T/main" FAKE_FF=wo/ff "$OC" "$T/t.md" "$T/wt" >"$T/o7" 2>&1; rc=$?
+chk "非 dcq/ 分支 ff 合進主 checkout 仍判越界 rc=2" "$rc" "2"
 
 exit "$fail"
