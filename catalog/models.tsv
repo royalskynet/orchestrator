@@ -24,10 +24,11 @@ free	opencode-run	opencode/mimo-v2.6-flash-free	flaky	gaps 15 跑 3 過，最近
 free	opencode-run	opencode/big-pickle	flaky	gaps 3 跑 0 過（10-18）	Zen 免費；曾卡住、假扮工具	big-pickle	easy
 free	opencode-run	opencode/nemotron-3.5-lightning-free	flaky	gaps 6 跑 0 過（10-18）	Zen 免費；94s 且改錯過	nemotron-3.5-lightning-free	easy
 free	opencode-run	opencode/flint-40b-free	ok	Zen /models 加掃 10-23	Zen 免費；自動新增，尚無實測	flint-40b-free	any
-free	opencode-run	opencode/jev-1.13-free	ok	Zen /models 加掃 10-23	Zen 免費；自動新增，尚無實測	jev-1.13-free	any
+free	opencode-run	opencode/jev-1.13-free	removed	Zen /models 加掃 10-23	Zen 免費；自動新增，尚無實測；10-31 自動移出（Zen /models 加掃：上游無）		any
 free	opencode-run	opencode-go/longcat-2.5-preview-free	removed	calllog 10396/11502	Go 免費（Go API 可直打）；OmniRoute go-free 首棒；10-23 自動移出（go-sync 週掃：上游無）		any
 free	opencode-run	opencode-go/step-5-preview-free	flaky	calllog 14/215	Go 免費		any
 free	opencode-run	opencode-go/beam-free	ok	gaps 12 跑 8 過，中位 71s（10-21）	Go 免費；樣本少	opencode-go/beam-free	any
+free	opencode-run	opencode-go/iceman-contributor-free	ok	go-sync 週掃 10-31	Go 免費；自動新增，尚無實測	opencode-go/iceman-contributor-free	any
 free	opencode-run	opencode-go/minimax-m3.1-flash-free	removed	手動補同步 10-21	Go 免費；自動新增，尚無實測；10-23 自動移出（go-sync 週掃：上游無）		any
 free	opencode-run	opencode-go/cat-jam-free	removed	calllog 1/1	Go 免費；樣本少；10-21 自動移出（手動補同步：上游無）		any
 free	omniroute	go-free（combo）	removed	10-20 實打回 longcat-2.5-preview-free	OmniRoute HTTP combo：opencode-go longcat／beam／minimax-m3.1-flash-free＋nim-pool，全免費（10-20 查 combos 表）；chain-a＝go-free→or-free→go-sub，尾棒付費不接；10-20 23:22 經 dc 實跑 OmniRoute 回 Unable to determine provider for model go-free（/v1/models 有列但 combo 路由不通），Go *-free 已直接進兜底層；10-20 使用者刪除 OmniRoute 內全部 OC 模型，combo 已不存在		any
@@ -85,9 +86,11 @@ sub	opencode-run	opencode-go/minimax-m3	unverified	Go 上游清單	Go 訂閱；2
 sub	opencode-run	opencode-go/qwen3.8-flash	unverified	Go 上游清單	Go 訂閱；28s	opencode-go/qwen3.8-flash	any
 sub	opencode-run	opencode-go/kimi-k2.7-code	unverified	Go 上游清單	Go 訂閱	opencode-go/kimi-k2.7-code	any
 sub	opencode-run	opencode-go/glm-5.3	unverified	Go 上游清單	Go 訂閱	opencode-go/glm-5.3	any
-sub	opencode-run	opencode-go/gemini-4-argon-contributor	ok	run 10-21 ok 7s	Go 訂閱；自動新增；10-21 opencode run 實打 1 次回 ok	opencode-go/gemini-4-argon-contributor	any
+sub	opencode-run	opencode-go/gemini-4-argon-contributor	removed	run 10-21 ok 7s	Go 訂閱；自動新增；10-21 opencode run 實打 1 次回 ok；10-31 自動移出（go-sync 週掃：上游無）		any
 sub	opencode-run	opencode-go/step-5-preview	ok	run 10-21 ok 3s	Go 訂閱；自動新增；10-21 opencode run 實打 1 次回 ok	opencode-go/step-5-preview	any
 sub	opencode-run	opencode-go/minimax-m3.1-flash	ok	go-sync 週掃 10-23	Go 訂閱；自動新增，尚無實測	opencode-go/minimax-m3.1-flash	any
+sub	opencode-run	opencode-go/gemini-4-argon	ok	go-sync 週掃 10-31	Go 訂閱；自動新增，尚無實測	opencode-go/gemini-4-argon	any
+sub	opencode-run	opencode-go/kimi-k3.1-pro	ok	go-sync 週掃 10-31	Go 訂閱；自動新增，尚無實測	opencode-go/kimi-k3.1-pro	any
 sub	omniroute	opencode-go/step-5-preview	ok	calllog 1/1	Go 訂閱		any
 api	opencode-run	opencode/<Zen 付費 80+ 個>	unverified	opencode models	扣 Zen 餘額：Claude／GPT-5～6.1／Gemini 3.x／Grok／Kimi／Qwen3.8-max 等		any
 api	omniroute	openai/*（OpenAI 連線）	unverified	calllog 只有 connection-test	Hermes 語音用 whisper-1／gpt-4o-mini-tts；按量計費		any
