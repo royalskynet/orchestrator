@@ -93,7 +93,7 @@ ck "上游抓不到 → 退回 models.dev 判沒有、不派" '[ "$(tried j6 zen
 XP="$DCQ_HOME/logs/x-pool.tsv"
 ck "第 1 段加掃已記 GONE zen-x" 'grep -q "	zen-models	GONE	zen-x$" "$XP"'
 ck "GONE zen-x 不重記" '[ "$(grep -c "	GONE	zen-x$" "$XP")" = 1 ]'
-printf '2026-01-01_00:00:00\topencode\tbig-pickle\tOK\n' > "$DCQ_HOME/logs/probe.tsv"   # 舊批次：x-pool 列都比它新
+printf '%s_00:00:00\topencode\tbig-pickle\tOK\n' "$(date -v-1y +%F 2>/dev/null || date -d '-1 year' +%F)" > "$DCQ_HOME/logs/probe.tsv"   # 舊批次：x-pool 列都比它新
 echo '{"data":[{"id":"live-zen"},{"id":"fresh-free"}]}' > "$T/zen.json"; export DCQ_ZEN_MODELS_URL="file://$T/zen.json"
 expire zen-x; add j7 w2; run
 ck "上游新 -free 記 NEW" 'grep -q "	zen-models	NEW	fresh-free$" "$XP"'

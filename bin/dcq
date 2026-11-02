@@ -774,6 +774,20 @@ runner_alive() {
   kill -0 "$pid" 2>/dev/null
 }
 cmd_add() {
+  local src=""
+  # --src <job-id>：pass-through（借鏡 Aider --restore-chat-history／codex exec resume）。
+  # 前張單的 cwd、合併後分支、摘要帶進新單，省掉 worker 重讀全部上下文。位置不拘，先撈出來。
+  local _args=() _skip=0 _a
+  for _a in "$@"; do
+    if [ "$_skip" = 1 ]; then src="$_a"; _skip=0; continue; fi
+    case "$_a" in
+      --src=*) src="${_a#--src=}" ;;
+      --src)   _skip=1 ;;
+      *)       _args+=("$_a") ;;
+    esac
+  done
+  [ "$_skip" = 1 ] && die "dcq add：--src 後面要接上張工單 id"
+  set -- ${_args[@]+"${_args[@]}"}
   local task="${1:-}" cwd="${2:-$PWD}" tier="${3:-${DCQ_TIER:-}}" order="${DCQ_ORDER:-default}"
   [ -n "$task" ] || die "用法：dcq add <task.md 絕對路徑> [cwd] [easy|mid|hard]"
   case "$task" in /*) ;; *) die "task 路徑必須是絕對路徑：$task" ;; esac
@@ -797,8 +811,35 @@ cmd_add() {
   # 免費全敗會升到 opencode-go 訂閱層；只要免費的呼叫端自己帶 DCQ_ORDER=free
   case "$order" in default|free|sub) ;; *) die "DCQ_ORDER 只能是 default／free／sub：$order" ;; esac
   [ -z "${DCQ_PREFER:-}" ] || pref_ok "$DCQ_PREFER" || die "DCQ_PREFER 只能含英數與 . _ / : -：$DCQ_PREFER"
+  # --src：先查前張單存在，再把它的 cwd／分支／摘要併進本單（找不到就 die，不靜默忽略）
+  local srcctx=""
+  if [ -n "$src" ]; then
+    local sj=""
+    for d in "$Q/done" "$Q/failed" "$Q/pending"; do [ -e "$d/$src.job" ] && { sj="$d/$src.job"; break; }; done
+    [ -n "$sj" ] || die "dcq add --src：查無工單 ${src}"
+    # cwd 沒明給就跟前張單走；明給就以呼叫端為準
+    [ "$#" -ge 2 ] || cwd="$(sed -n 's/^CWD0=//p;s/^CWD=//p' "$sj" | head -1)"
+    [ -d "$cwd" ] || die "dcq add --src：前張單 cwd 不存在：$cwd"
+    cwd="$(cd "$cwd" && pwd)"
+    local sbranch="" ssum
+    # 分支照 merge 的命名慣例推：合併成功 dcq/<src> 已刪，衝突才留著
+    sbranch="dcq/$src"
+    [ -n "$(sed -n 's/^MERGED=//p' "$sj" | tail -1)" ] && sbranch="${sbranch}(已合併)"
+    ssum="$(job_brief "$src" 2>/dev/null | head -1)"
+    srcctx="## 續前張單（pass-through）
+上張工單：${src} ${ssum}
+工作目錄：$cwd${sbranch:+
+分支：$sbranch}
+只補這次要改的部分，不要重做上張單已完成的項。"
+  fi
   local id="$(date +%s)-$$-$(basename "${task%.md}")"
+  if [ -n "$src" ]; then
+    local tcopy="$Q/.src/$id.task.md"; mkdir -p "$Q/.src"
+    { printf '%s\n' "$srcctx"; cat "$task"; } > "$tcopy"
+    task="$tcopy"
+  fi
   printf 'TASK=%s\nCWD=%s\nTIER=%s\nORDER=%s\n' "$task" "$cwd" "$tier" "$order" > "$Q/pending/$id.job"
+  [ -n "$src" ] && echo "SRC=$src" >> "$Q/pending/$id.job"
   [ -n "${DCQ_SPIN_S:-}" ] && echo "SPIN=$DCQ_SPIN_S" >> "$Q/pending/$id.job"   # 逐張關防空轉（唯讀工單帶 0）
   # 逐張預算（研究類長工單用，2026-10-21）：JOBMAX＝這張的總時限；SAT＝連續幾次嘗試 cwd 沒有新產出就停
   [ -n "${DCQ_JOB_MAX:-}" ] && echo "JOBMAX=$DCQ_JOB_MAX" >> "$Q/pending/$id.job"
@@ -1187,6 +1228,7 @@ run_job() {
     fi
     case "$why:$rc" in
       exit:0) reset_fail "$model"
+         echo "MODEL=$model" >> "$jobfile"   # status <id> 摘要用
          mv "$jobfile" "$Q/done/$id.job"
          echo "dcq[$id] PASS model=$model" >&2
          rm -rf "$DC_PREFLIGHT_DIR"   # 前置檢查憑證只對這張工單有效，結案就收掉
@@ -1478,8 +1520,64 @@ cmd_cancel() {
   fi
 }
 
+# 單張工單摘要（2026-11-02，格式借 systemctl status）：一行結果＋錯誤原文限行。
+# 只讀 done|failed 的 .job 與 logs/*.out，不碰上游；錯誤行去重、上限 BRIEF_MAX 行（預設 12）。
+BRIEF_MAX="${DCQ_BRIEF_MAX:-12}"
+# 錯誤行遮罩：.out 只遮「鍵名含 SECRET／TOKEN／PASSWORD」的行，Bearer、Basic、OTP、私鑰另遮。
+# 摘要會進主 session 對話（transcript），所以輸出前再過一次，不只靠 .out 的遮罩。
+brief_sanitize() {
+  sed -E \
+    -e 's/([Aa]uthorization[[:space:]]*:[[:space:]]*[A-Za-z]+)[[:space:]]+[^[:space:]]+/\1 ***/g' \
+    -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._~+\/-]+/\1***/g' \
+    -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----/[PRIVATE KEY]/g' \
+    -e 's/[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}/****-****-****-****/g' \
+    -e 's/0x[0-9a-fA-F]{64}/0x…/g' | cut -c1-240
+}
+# 錯誤行候選：先 filter 再 tail（反過來會讓前面的雜訊把真正的錯誤擠出 40 行外）；
+# 多模型重試時一併看所有 .out，但排除 best-of-N 的候選目錄（落選者的錯不是主因）。
+brief_lines() {
+  grep -hE 'error|Error|ERROR|FAIL|FAILED|fatal|Fatal|dc: |stall|停滯' "$@" 2>/dev/null \
+    | brief_sanitize | awk '!seen[$0]++'
+}
+job_brief() {
+  local id="$1" job last model merged merge st=fail flags="" line n=0 files="" cnt
+  job="$Q/done/$id.job"; [ -e "$job" ] || job="$Q/failed/$id.job"
+  [ -e "$job" ] || { echo "dcq: 查無此單 $id （不在 done／failed）"; return 1; }
+  last="$(sed -n 's/^LAST_RC=//p' "$job" | tail -1)"
+  [ -e "$Q/done/$id.job" ] && st=ok
+  model="$(sed -n 's/^MODEL=//p' "$job" | tail -1)"
+  # 取消與越界寫檔是呼叫端判「重派／要人看」的訊號，必須獨立成欄，不能併進 rc
+  grep -q '^CANCELLED=1' "$job" && { st=cancelled; flags="$flags cancelled"; }
+  grep -q '^SCOPE=over' "$job" && flags="$flags scope=over"
+  merged="$(sed -n 's/^MERGED=//p' "$job" | tail -1)"
+  merge="$(sed -n 's/^MERGE=//p' "$job" | tail -1)"
+  if [ -n "$(sed -n 's/^WT=//p' "$job")" ] && [ -z "$merged" ] && [ -z "$merge" ]; then merge=pending; fi
+  printf '%s  result=%s%s%s%s%s\n' "$id" "$st" \
+    "$([ "$st" = ok ] || [ "$st" = cancelled ] || echo " rc=${last:-?}")" \
+    "$flags" "${merged:+ merged=1}" "${merge:+ merge=$merge}"
+  [ -n "$model" ] && echo "  task: $(sed -n 's/^TASK0=\|^TASK=/p' "$job" | head -1)  model=$model"
+  [ "$st" = ok ] && [ -z "$flags" ] && return 0
+  for out in "$Q"/logs/"$id".*.out; do
+    [ -e "$out" ] || continue
+    case "$(basename "$out")" in "$id".bon*) continue ;; esac
+    files="$files logs/$(basename "$out")"
+  done
+  [ -n "$files" ] || { echo "  no log (.out 已清或沒跑到)"; return 0; }
+  local args="" f
+  for f in $files; do args="$args $Q/$f"; done
+  cnt="$(brief_lines $args | wc -l | tr -d ' ')"
+  brief_lines $args | tail -"$BRIEF_MAX" | sed 's/^/  /'
+  [ "${cnt:-0}" -gt "$BRIEF_MAX" ] && echo "  …（共 ${cnt} 行，只印最後 ${BRIEF_MAX}；全文看${files}）"
+  return 0
+}
+
 cmd_status() {
   local s
+  case "${1:-}" in
+    "") ;;
+    -h|--help) echo "用法: dcq status [<job-id>]"; return 0 ;;
+    *) job_brief "$1"; return $? ;;
+  esac
   for s in pending running done failed; do
     # 只算 .job：running/ 還放 .pid，全算的話 1 張在跑會顯示 running 2
     printf '%-8s %s\n' "$s" "$(ls -1 "$Q/$s" 2>/dev/null | grep -c '\.job$')"
@@ -1632,6 +1730,8 @@ usage() {
   dcq run [-j N]                     起 N 個 slot 併發跑到 pending 清空（預設 4，上限 8）
   dcq start [-j N]                   同 run，但放進獨立 tmux 脫離呼叫端（從 agent session 派工用這個）
   dcq status                         各狀態計數與失敗清單
+  dcq status <job-id>                單張摘要：一行結果（rc／cancelled／scope=over／merge）＋錯誤原文限行
+                                     錯誤行去重、遮罩（Bearer/Basic/私鑰/卡號/0x 私鑰地址），上限 DCQ_BRIEF_MAX（預設 12）
   dcq plan <task.md>...              派工前預覽每張的難度與會走的層（不入列）
   dcq rescan                         抓 Zen 上游 /models 清單（零 token），上下架回灌名單與清冊
   dcq doctor [--fix]                 免費池健檢：各 provider 數、被剔出的模型（壞＝exit 1，刻意關閉＝略過）；--fix 印 opencode.json 補丁
@@ -1687,7 +1787,7 @@ case "${1:-}" in
   run)    shift; [ "${1:-}" = "-j" ] && { JOBS="$2"; shift 2; }; cmd_run ;;
   start)  shift; [ "${1:-}" = "-j" ] && { JOBS="$2"; shift 2; }; cmd_start ;;
   plan)   shift; cmd_plan "$@" ;;
-  status) cmd_status ;;
+  status) shift; cmd_status "$@" ;;
   doctor) shift; cmd_doctor "$@" ;;
   rank)   shift; rank_free "${MODELS_MANUAL:-$MODELS}" table "${1:-}"; echo "名單同步：${SYNC_NOTE:-無變動}"; echo "兜底層：$POOL_TAIL"; echo "訂閱層：$POOL_PAID"; echo "Claude 層（只派os）：${POOL_CLAUDE:-無}"; echo "API 層：${POOL_API:-（關，DCQ_ALLOW_API=1 才開）}"; echo "hard 不派：${EASY_ONLY:-無}"; echo "mid 不派：${EASY_STRICT:-無}"; echo "provider 上限：${PROV_MAX:-無}" ;;
   rescan) RESYNC_MIN_S=0 zen_resync "每日清單掃" ;;

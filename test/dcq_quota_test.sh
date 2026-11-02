@@ -56,7 +56,9 @@ ck "kilo/k1 限流記 why=upstream" '[ "$(why kilo/k1)" = upstream ]'
 ck "kilo/bad 普通 rc=1 照記 exit" '[ "$(why kilo/bad)" = exit ]'
 
 # 3. 排名：quota／upstream 不算樣本；普通失敗照算
-for i in 1 2 3 4 5 6; do printf '2026-10-24_0%s:00:00\tzen-a\t1\t1\tquota\t2\tmid\n' "$i"; printf '2026-10-24_0%s:00:00\tkilo/bad\t1\t1\texit\t2\tmid\n' "$i"; done >> "$DCQ_HOME/logs/gaps.tsv"
+# 日期用今天：寫死舊日期會被 7 天假釋窗（RANK_PAROLE_D）拉回 manual，冷宮驗不到
+D=$(date +%F)
+for i in 1 2 3 4 5 6; do printf '%s_0%s:00:00\tzen-a\t1\t1\tquota\t2\tmid\n' "$D" "$i"; printf '%s_0%s:00:00\tkilo/bad\t1\t1\texit\t2\tmid\n' "$D" "$i"; done >> "$DCQ_HOME/logs/gaps.tsv"
 tbl="$(DCQ_MODELS="zen-a kilo/bad opencode-go/live-free" dcq rank 2>/dev/null)"
 ck "rank 冷宮不含 zen-a（額度不算失敗）" '! printf "%s\n" "$tbl" | grep -E "冷宮|0 PASS" | grep -q "zen-a"'
 ck "rank 冷宮含 kilo/bad（真失敗照算）" 'printf "%s\n" "$tbl" | grep -E "冷宮|0 PASS" | grep -q "kilo/bad"'

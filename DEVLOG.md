@@ -1,5 +1,21 @@
 # DEVLOG
 
+## 2026-11-02：dcq 三點借鑒（DeepSeek Harness〈Super-agent Design〉）wheel 裁決
+
+- **派工回報限字數**：不做——`dcq wait` 只回 `PASS`／`FAIL rc=N`（上一節已實測）。
+- **輪子：借鏡 自造｜借鏡（`systemctl status`／MCP `resource_link` 只取格式，零依賴）**
+- **A `dcq status <id>` 摘要**：格式照 `systemctl status`——結果行（rc／cancelled／merge）＋ `.out` 去重限行錯誤；社群兩單（burpctl#15、cezar-factory#103）同結論「一線結論＋限行原文」。無現成 CLI 可裝。
+- **B pass-through（`add --src`）**：Aider `--restore-chat-history`、Codex `exec resume`、Claude Code `--resume` 都靠「同一份 session 檔還在」；dcq 換模型重試時前張單可能被別家模型跑，session 不互通。只借「a 張單入列帶前張 cwd 分支＋摘要」的設計。
+- **C `fixindex find --spill`**：對齊 MCP `resource_link`（只回 URI＋摘要，`resources/read` 才取全文）；RAG 叫 progressive disclosure，社群無權威討論（HN 訊號<2），自寫。
+- **警示**：B 會改工作目錄狀態（worktree 分支 merge），先用假 dc 測試釘住。計畫 `~/.claude/plans/dcq-superagent-borrow.md`。
+
+## 2026-11-02：重驗「派工回報只回結論」假設（未改碼）
+
+- **假設**（由 DeepSeek Harness〈Super-agent Design〉借鑒推導）：主 session 吃 `dcq wait` 的結果會把整份 `.out` 帶回來，要改成只輸結論。
+- **實測**：`dcq wait` 只印 `PASS <id>`（done 成立）／`FAIL <id> rc=N`（讀 `LAST_RC=`），`run_job` 的過程訊息全走 stderr，不進主 session。**假設不成立**，不需要限字數。
+- **真缺口**：單張工單的失敗原因與 merge 狀態分散在 `~/.dcq/failed/<id>.job`（`LAST_RC=`、`CANCELLED=`、`MERGE=`）與 `logs/<id>.*.out`，沒有彙總指令。
+- 待辦（計畫 `~/.claude/plans/dcq-superagent-borrow.md`）：A `dcq status <id>` 摘要、B `add --src` pass-through、C fixindex `find --spill`。
+
 ## 2026-10-22：改名 Orchestrator，觸發詞派o／派of／派os
 
 - **定位**：模型來源早已不限 opencode（Zen 免費、opencode-go 訂閱、OmniRoute 轉接的 NIM／OpenRouter、付費 API 都在 `catalog/models.tsv`），opencode CLI 只當 agent 外殼。README 中英說明改寫成「多 LLM 依實績智慧調配」。
