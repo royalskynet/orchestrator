@@ -24,6 +24,8 @@ free	opencode-run	opencode/mimo-v2.6-flash-free	flaky	gaps 15 跑 3 過，最近
 free	opencode-run	opencode/big-pickle	flaky	gaps 3 跑 0 過（10-18）	Zen 免費；曾卡住、假扮工具	big-pickle	easy
 free	opencode-run	opencode/nemotron-3.5-lightning-free	flaky	gaps 6 跑 0 過（10-18）	Zen 免費；94s 且改錯過	nemotron-3.5-lightning-free	easy
 free	opencode-run	opencode/flint-40b-free	ok	Zen /models 加掃 10-23	Zen 免費；自動新增，尚無實測	flint-40b-free	any
+free	opencode-run	opencode/pulse-alpha-free	ok	Zen /models 加掃 11-04	Zen 免費；自動新增，尚無實測	pulse-alpha-free	any
+free	opencode-run	opencode/crouton-alpha-free	ok	Zen /models 加掃 11-04	Zen 免費；自動新增，尚無實測	crouton-alpha-free	any
 free	opencode-run	opencode/jev-1.13-free	removed	Zen /models 加掃 10-23	Zen 免費；自動新增，尚無實測；10-31 自動移出（Zen /models 加掃：上游無）		any
 free	opencode-run	opencode-go/longcat-2.5-preview-free	removed	calllog 10396/11502	Go 免費（Go API 可直打）；OmniRoute go-free 首棒；10-23 自動移出（go-sync 週掃：上游無）		any
 free	opencode-run	opencode-go/step-5-preview-free	flaky	calllog 14/215	Go 免費		any
