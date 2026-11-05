@@ -1229,6 +1229,10 @@ run_job() {
     case "$why:$rc" in
       exit:0) reset_fail "$model"
          echo "MODEL=$model" >> "$jobfile"   # status <id> 摘要用
+         if grep -q '^dc: SKIPPED' "$Q/logs/$id.$(fk "$model").out" 2>/dev/null; then
+           echo 'SKIPPED=1' >> "$jobfile"   # 11-06：驗收動工前已過且工單標 NEG-CONTROL: n/a，沒派模型
+           echo "dcq[$id] SKIPPED（已完成，驗收動工前就過；model=$model 未實際動工）" >&2
+         fi
          mv "$jobfile" "$Q/done/$id.job"
          echo "dcq[$id] PASS model=$model" >&2
          rm -rf "$DC_PREFLIGHT_DIR"   # 前置檢查憑證只對這張工單有效，結案就收掉
@@ -1540,7 +1544,7 @@ brief_lines() {
     | brief_sanitize | awk '!seen[$0]++'
 }
 job_brief() {
-  local id="$1" job last model merged merge st=fail flags="" line n=0 files="" cnt
+  local id="$1" job last model merged merge st=fail flags="" skp="" line n=0 files="" cnt
   job="$Q/done/$id.job"; [ -e "$job" ] || job="$Q/failed/$id.job"
   [ -e "$job" ] || { echo "dcq: 查無此單 $id （不在 done／failed）"; return 1; }
   last="$(sed -n 's/^LAST_RC=//p' "$job" | tail -1)"
@@ -1549,12 +1553,13 @@ job_brief() {
   # 取消與越界寫檔是呼叫端判「重派／要人看」的訊號，必須獨立成欄，不能併進 rc
   grep -q '^CANCELLED=1' "$job" && { st=cancelled; flags="$flags cancelled"; }
   grep -q '^SCOPE=over' "$job" && flags="$flags scope=over"
+  grep -q '^SKIPPED=1' "$job" && skp=" skipped"
   merged="$(sed -n 's/^MERGED=//p' "$job" | tail -1)"
   merge="$(sed -n 's/^MERGE=//p' "$job" | tail -1)"
   if [ -n "$(sed -n 's/^WT=//p' "$job")" ] && [ -z "$merged" ] && [ -z "$merge" ]; then merge=pending; fi
   printf '%s  result=%s%s%s%s%s\n' "$id" "$st" \
     "$([ "$st" = ok ] || [ "$st" = cancelled ] || echo " rc=${last:-?}")" \
-    "$flags" "${merged:+ merged=1}" "${merge:+ merge=$merge}"
+    "$flags$skp" "${merged:+ merged=1}" "${merge:+ merge=$merge}"
   [ -n "$model" ] && echo "  task: $(sed -n 's/^TASK0=\|^TASK=/p' "$job" | head -1)  model=$model"
   [ "$st" = ok ] && [ -z "$flags" ] && return 0
   for out in "$Q"/logs/"$id".*.out; do

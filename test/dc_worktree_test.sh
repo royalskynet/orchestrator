@@ -44,6 +44,9 @@ chk() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1: got '$2' wa
 FAKE_TARGET="$T/main/stray.txt" "$OC" "$T/t.md" "$T/wt" >"$T/o1" 2>&1; rc=$?
 chk "寫到主 checkout rc=2" "$rc" "2"
 grep -q "越界.*" "$T/o1" && grep -q "$T/main" "$T/o1" || { echo "FAIL 沒印越界路徑"; cat "$T/o1"; fail=1; }
+# 11-06：日誌要印實際被改的檔（斜線後加空格避開 .out 遮罩），不只 worktree 根
+want="$(printf '%s' "$T/main/stray.txt" | sed 's#/#/ #g')"
+grep -qF "改動(??) $want" "$T/o1" || { echo "FAIL 越界日誌沒印實際被改的路徑 ($want)"; cat "$T/o1"; fail=1; }
 rm -f "$T/main/stray.txt"
 
 FAKE_TARGET="$T/wt/ok.txt" "$OC" "$T/t.md" "$T/wt" >"$T/o2" 2>&1; rc=$?

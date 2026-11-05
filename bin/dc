@@ -144,6 +144,20 @@ fi
 # 逃生門：確認既有狀態型的工單寫一行 `NEG-CONTROL: n/a`，或 DC_NEGCTL=0。
 # 有前置檢查憑證就不重跑：這張工單已經對照過一次，再跑只是白等 120s。
 negctl_ok=0
+# 11-06：工單標了 `NEG-CONTROL: n/a`（＝宣告「可能已完成」）且驗收在動工前就通過 → 結案為已完成/SKIPPED，
+# 不派模型（以前是放行後照派，白燒一隻模型；沒標的仍走下面的中止分支）。K 次全過才算，與正式驗收同標準。
+# DC_NEGCTL=0 是「強制派工」，不走這條。dcq 認 `dc: SKIPPED` 這行，結案記 SKIPPED=1。
+if [ -z "$pf_pin" ] && [ "${DC_NEGCTL:-1}" = 1 ] && grep -q '^NEG-CONTROL: *n/a' "$f"; then
+  sk=1; sk_i=1
+  while [ "$sk_i" -le "${DC_VERIFY_K:-2}" ]; do
+    ( cd "$d" && WO_VERIFY_TIMEOUT="${DC_NEGCTL_TIMEOUT:-120}" "$WV" "$f" --pinned "$pin" >/dev/null 2>&1 ) || { sk=0; break; }
+    sk_i=$((sk_i + 1))
+  done
+  if [ "$sk" = 1 ]; then
+    echo "dc: SKIPPED——驗收在動工前已通過（${DC_VERIFY_K:-2} 次）且工單標 NEG-CONTROL: n/a，視為已完成，不派模型。cwd=${d}" >&2
+    exit 0
+  fi
+fi
 if [ -z "$pf_pin" ] && [ "${DC_NEGCTL:-1}" = 1 ] && ! grep -q '^NEG-CONTROL: *n/a' "$f"; then
   if ( cd "$d" && WO_VERIFY_TIMEOUT="${DC_NEGCTL_TIMEOUT:-120}" "$WV" "$f" --pinned "$pin" >/dev/null 2>&1 ); then
     echo "dc: 中止——驗收在未動工前就通過（do-nothing 對照失敗）。" >&2
@@ -499,6 +513,15 @@ done)"
 if [ -n "$drift" ]; then
   echo "dc: 越界——opencode 改動了同 repo 其他 worktree（工單 cwd=${d}）：" >&2
   printf '  %s\n' $drift >&2
+  # 11-06：只印 worktree 根不夠判斷是模型亂寫還是工單本來就跨 repo——補印實際被改的路徑（只印路徑，不印內容）。
+  # 斜線後加空格：.out 會過 mask-transcript，長路徑（≥24 字元含大寫＋數字）會被規則 4 整段吞成 <MASKED_OPAQUE>。
+  for w in $drift; do
+    h0="$(printf '%s\n' "$wt_before" | awk -v w="$w" '$1==w {print $2}')"; h1="$(git -C "$w" rev-parse HEAD 2>/dev/null)"
+    { [ -n "$h0" ] && [ "$h0" != "$h1" ] && git -C "$w" diff --name-only "$h0" "$h1" 2>/dev/null | sed 's/^/commit /'
+      git -C "$w" status --porcelain 2>/dev/null | sed 's/^\(..\) /\1 /'; } | head -30 | while IFS=' ' read -r tag rel; do
+      printf '    改動(%s) %s\n' "$tag" "$(printf '%s/%s' "$w" "$rel" | sed 's#/#/ #g')" >&2
+    done
+  done
   echo "dc: 判 FATAL，不跑驗收；請主 session 檢查並還原上列 worktree" >&2
   exit 2
 fi

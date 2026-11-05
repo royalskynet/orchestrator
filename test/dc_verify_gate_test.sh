@@ -74,6 +74,15 @@ grep -q 'do-nothing 對照失敗' "$T/2.out" || { echo "FAIL 負向對照訊息�
 printf '\nNEG-CONTROL: n/a\n' >> "$T/t.md"
 "$DC" "$T/t.md" "$T/w" > "$T/2b.out" 2>&1
 chk "NEG-CONTROL: n/a 放行且驗收過 → rc=0" "$?" "0"
+# 11-06：標了 NEG-CONTROL: n/a 且動工前就過 → 結案 SKIPPED（rc=0）、不派模型；沒標的上面已驗仍 rc=2
+chk "NEG-CONTROL: n/a 且預先通過 → 不派模型" "$(wc -l < "$T/ran" | tr -d ' ')" "0"
+grep -q '^dc: SKIPPED' "$T/2b.out" || { echo "FAIL 標記+預先通過沒印 dc: SKIPPED"; fail=1; }
+# 標了但驗收還沒過（真的要做事）→ 照派，不 skip
+wo "要產生 done"; printf '\nNEG-CONTROL: n/a\n' >> "$T/t.md"; rm -f "$T/w/done"; : > "$T/ran"
+"$DC" "$T/t.md" "$T/w" > "$T/2d.out" 2>&1
+chk "標記但未完成 → 照派且 rc=0" "$?" "0"
+chk "標記但未完成 → opencode 有被叫" "$(wc -l < "$T/ran" | tr -d ' ')" "1"
+! grep -q '^dc: SKIPPED' "$T/2d.out" || { echo "FAIL 未完成卻印 SKIPPED"; fail=1; }
 # DC_NEGCTL=0 也是逃生門
 wo "要產生 done"; : > "$T/w/done"
 DC_NEGCTL=0 "$DC" "$T/t.md" "$T/w" > "$T/2c.out" 2>&1

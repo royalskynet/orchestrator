@@ -107,6 +107,13 @@ case "$out" in *'tasks=1, formula=40+20*(tasks-1)'*) echo 'ok: 單任務超限�
 out=$("$HERE/deep-lint" "$tmp/three-tasks.md" 2>&1)
 case "$out" in 'LINT OK') echo 'ok: 三任務合理長度不警告'; echo 'ok: 多任務合理長度不警告';; *) echo "FAIL: 三任務長度誤報 — $out"; rc=1;; esac
 
+sed 's/^### 三$/### 三\n### 四/' "$tmp/three-tasks.md" > "$tmp/four-tasks.md"
+printf '\n```bash\n### fence 內不算\n```\n' >> "$tmp/three-tasks.md"
+out=$("$HERE/deep-lint" "$tmp/four-tasks.md" 2>&1)
+case "$out" in *'4 個 ### 子任務'*) echo 'ok: 四個子任務→要拆';; *) echo "FAIL: 四子任務未警告 — $out"; rc=1;; esac
+out=$("$HERE/deep-lint" "$tmp/three-tasks.md" 2>&1)
+case "$out" in *'子任務'*) echo "FAIL: 三子任務或 fence 內 ### 誤報 — $out"; rc=1;; *) echo 'ok: 三子任務＋fence 內 ### 不警告';; esac
+
 out=$("$HERE/deep-lint" "$tmp/loose.md" 2>&1)
 case "$out" in
   *'禁令寫在正文'*) echo "ok: 正文禁令被抓到" ;;
