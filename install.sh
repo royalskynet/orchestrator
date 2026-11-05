@@ -16,16 +16,22 @@ ln -sfn "$REPO/bin/freepool-guard" ~/.local/bin/freepool-guard
 # 週探測（oc-free-check／go-sync／launchd）是選配，在 oc-probe/，由 oc-probe/install.sh 裝；
 # dcq rank 照讀 ~/.dcq/logs/probe.tsv，沒裝就沒有探測資料。
 
-# ~/.claude/skills/o：若已是實體目錄（非 symlink），先備份進 repo 再連結
-if [ -d ~/.claude/skills/o ] && [ ! -L ~/.claude/skills/o ]; then
-  mkdir -p "$REPO/.bak"
-  mv ~/.claude/skills/o "$REPO/.bak/o-$(date +%Y%m%d-%H%M%S)"
-fi
-ln -sfn "$REPO/skills/o" ~/.claude/skills/o
-[ -L ~/.claude/skills/dc ] && rm ~/.claude/skills/dc  # 10-16 前舊名
+# skill 安裝到各 agent 客戶端：~/.claude/skills（Claude Code）、~/.agents/skills、~/.codex/skills（Codex CLI）。
+# O_SKILL_HOME 可覆寫（空白分隔）；實體目錄先備份進 repo 再連結；冪等。
+SKILL_DIRS="${O_SKILL_HOME:-$HOME/.claude/skills $HOME/.agents/skills $HOME/.codex/skills}"
+for _d in $SKILL_DIRS; do
+  mkdir -p "$_d"
+  if [ -d "$_d/o" ] && [ ! -L "$_d/o" ]; then
+    mkdir -p "$REPO/.bak"
+    mv "$_d/o" "$REPO/.bak/o-$(basename "$(dirname "$_d")")-$(date +%Y%m%d-%H%M%S)"
+  fi
+  ln -sfn "$REPO/skills/o" "$_d/o"
+  if [ -L "$_d/dc" ]; then rm "$_d/dc"; fi  # 10-16 前舊名
+done
 
 echo "Installed symlinks:"
-for t in ~/.local/bin/dc ~/.local/bin/dcq ~/.local/bin/zen-gate ~/.local/bin/wo-verify ~/.local/bin/freepool-guard ~/.claude/skills/o; do
+_skills=""; for _d in $SKILL_DIRS; do _skills="$_skills $_d/o"; done
+for t in ~/.local/bin/dc ~/.local/bin/dcq ~/.local/bin/zen-gate ~/.local/bin/wo-verify ~/.local/bin/freepool-guard $_skills; do
   ls -l "$t"
   [ -e "$t" ] || { echo "DANGLING: $t"; exit 1; }
 done
