@@ -53,6 +53,11 @@ if [ -n "$pin" ]; then
 fi
 [ -n "$script" ] || { echo "wo-verify: 沒有可跑的驗收區塊（none）"; exit 2; }
 [ "${2:-}" = "--dump" ] && { printf '%s\n' "$script"; exit 0; }
+# 驗收不准真的發訊息給 bot：每次重驗都會在使用者手機多一則（11-05 一條「連線測試」被重跑 4 次）。
+# 要證明送得出去，改測 OMB health 或用假 CLI。exit 2＝工單瑕疵。
+if printf '%s\n' "$script" | grep -qE 'openmausbot[[:space:]]+run|wake\.(turn|wake)\(|notify\.(notify|turn|post)\(|omb_post\.post\(|python[0-9.]*[[:space:]][^|;&]*notify\.py|(^|[[:space:];&|])(sh[[:space:]]+)?[^[:space:]]*(omb-ask|egg-send)\.sh'; then
+  echo "wo-verify: 驗收會真的發訊息給 bot（openmausbot run／wake／notify）—— 改測 OMB health 或假 CLI"; exit 2
+fi
 if [ "$dry" -eq 1 ]; then printf '%s\n' "$script" | bash -n; exit $?; fi
 # 不開 pipefail：`cmd | grep -q` 命中即關管，cmd 續寫吃 SIGPIPE → 141 假失敗（09-22 實證 launchctl print/claude mcp get）
 # 逾時可調：dc 的 do-nothing 負向對照在派工前跑同一支腳本，不該為此等 10 分鐘。
