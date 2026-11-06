@@ -32,12 +32,13 @@ CAT="${DCQ_CATALOG:-$(dirname "$(readlink -f "$0")")/../catalog}"
 # $1=billing（free／sub／api）$2=zen（dc_id 無斜線）／slash（有斜線）；依清冊列序印 dc_id
 cat_pool() {
   [ -r "$CAT/models.tsv" ] || return 0
-  awk -F'\t' -v b="$1" -v k="$2" '!/^#/ && $1==b && $7!="" { z=(index($7,"/")==0); if ((k=="zen")==z) printf "%s%s", (n++ ? " " : ""), $7 }' "$CAT/models.tsv"
+  # status=disabled ＝人工停用（11-06：opencode/ 免費項 120s 全超時）；列保留、不進任何池
+  awk -F'\t' -v b="$1" -v k="$2" '!/^#/ && $1==b && $7!="" && $4!="disabled" { z=(index($7,"/")==0); if ((k=="zen")==z) printf "%s%s", (n++ ? " " : ""), $7 }' "$CAT/models.tsv"
 }
 # fit=easy＝hard 工單不派（改錯、假扮工具、無限迴圈、隨機分配的前科）
-EASY_ONLY="${DCQ_EASY_ONLY-$( [ -r "$CAT/models.tsv" ] && awk -F'\t' '!/^#/ && $7!="" && $8=="easy" { printf "%s%s", (n++ ? " " : ""), $7 }' "$CAT/models.tsv")}"
+EASY_ONLY="${DCQ_EASY_ONLY-$( [ -r "$CAT/models.tsv" ] && awk -F'\t' '!/^#/ && $7!="" && $8=="easy" && $4!="disabled" { printf "%s%s", (n++ ? " " : ""), $7 }' "$CAT/models.tsv")}"
 # fit=easy-only＝只派 easy 工單，mid／hard 都不派（2026-10-22：or-free 23 跑 1 過、失敗白等 11262s，mid 工單照樣派到它）
-EASY_STRICT="${DCQ_EASY_STRICT-$( [ -r "$CAT/models.tsv" ] && awk -F'\t' '!/^#/ && $7!="" && $8=="easy-only" { printf "%s%s", (n++ ? " " : ""), $7 }' "$CAT/models.tsv")}"
+EASY_STRICT="${DCQ_EASY_STRICT-$( [ -r "$CAT/models.tsv" ] && awk -F'\t' '!/^#/ && $7!="" && $8=="easy-only" && $4!="disabled" { printf "%s%s", (n++ ? " " : ""), $7 }' "$CAT/models.tsv")}"
 EASY_ONLY="${EASY_ONLY}${EASY_STRICT:+${EASY_ONLY:+ }$EASY_STRICT}"
 # 模型池：Go 的兩隻限時無限免費（CLI 走 opencode/ 前綴，2026-09-30 實測可用）為主，
 # Zen 免費池殿後。訂閱沒了就清空 DCQ_POOL_GO。兩池只是依序串接——「池」的意義在
@@ -203,6 +204,10 @@ if [ -z "${DCQ_MODELS:-}" ] && [ "${DCQ_POOLSYNC:-1}" != 0 ]; then
   [ -z "${_s%%|*}" ] || SYNC_NOTE="新增 ${_s%%|*}；"; [ -z "${_s#*|}" ] || SYNC_NOTE="${SYNC_NOTE}移出 ${_s#*|}；"
   [ -z "${_s%%|*}" ] || SYNC_ADD_ZEN="${_s%%|*}"; [ -z "${_s#*|}" ] || SYNC_RM="${_s#*|}"
 fi
+# 11-06：清冊 status=disabled 的模型，連 Zen 每日同步加回來的也要擋掉（probe.tsv 會把它們當 OK 加回）。
+DISABLED_IDS="${DCQ_DISABLED_IDS-$( [ -r "$CAT/models.tsv" ] && awk -F'\t' '!/^#/ && $4=="disabled" && $7!=""{printf "%s ", ($7 ~ /\// ? $7 : "opencode/" $7); printf "%s ", $7}' "$CAT/models.tsv")}"
+drop_disabled() { local m o=""; for m in $1; do case " $DISABLED_IDS " in *" $m "*) ;; *) o="$o${o:+ }$m" ;; esac; done; echo "$o"; }
+[ -n "${DCQ_MODELS:-}" ] || MODELS="$(drop_disabled "$MODELS")"
 # 權重：免費層優先。只有免費模型整輪試過 FREE_ROUNDS 次都失敗，或免費模型全部在冷卻
 # （＝免費掛了），才往下走懲罰層 → 兜底層 → 訂閱層（2026-10-13 起訂閱墊底）。訂閱層只准 opencode-go/（扣 Go 訂閱額度）——
 # 走到這層 dc 會發 TG 警示。設空字串＝永不動用訂閱。

@@ -2,7 +2,7 @@
 """go-sync（oc-probe 選配，原 agent-tools/opencode-go-sync.py）: OpenCode Go 上游模型清單 → dr（dcq）訂閱層名單。不動 OmniRoute。
 2026-10-07 起因：muse-spark-1.x-contributor 在 Go 清單還列著但實打回空回應(502)、space-bunny-free 從 Go 下架。
 2026-10-21 改：OmniRoute 內 OC 模型 10-20 已全刪（go-sub/go-free 不存在），本腳本只寫 state 給 dcq，不讀寫 OmniRoute。
-- 每 7 天（SCAN_EVERY_D）抓一次 /zen/go/v1/models，寫 state（upstream、first_seen、at）；dcq 讀它增減訂閱層與兜底層的 opencode-go/*-free（≤8 天才採用）。
+- 每天（SCAN_EVERY_D，11-06 起由 7 改 1：Go 免費模型會輪換，週掃會漏）抓一次 /zen/go/v1/models，寫 state（upstream、first_seen、at）；dcq 讀它增減訂閱層與兜底層的 opencode-go/*-free（≤8 天才採用）。
 - 推文由 oc-probe x（每 4h）讀，本腳本不讀（2026-10-21 移除，避免同一則推兩次）。
 由 oc-probe daily（每天 06:00）呼叫，未滿 7 天直接結束。零 token：不叫 LLM，不實打模型。
 絕不印任何憑證值。用法：go-sync [--dry-run] [--scan] [--selftest]
@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 H = os.path.expanduser
 STATE = os.environ.get('DCQ_GO_STATE', H('~/.dcq/logs/go-models.json'))  # dcq 讀同一個 env／預設
 UPSTREAM = 'https://opencode.ai/zen/go/v1/models'
-SCAN_EVERY_D = 7
+SCAN_EVERY_D = 1
 log = lambda *a: print(datetime.now().strftime('%F %T'), 'go-sync', *a, flush=True)
 
 
@@ -41,9 +41,9 @@ def scan_diff(prev, upstream, first_seen_prev, today):
 def selftest():
     now = datetime(2026, 10, 27, 9, 0, 3)
     assert scan_due('', now) and scan_due('bad', now) and scan_due('2026-10-26T09:00:00', now, force=True)
-    assert scan_due('2026-10-20T09:00:15', now)                # 滿 7 天（差幾秒）→ 掃
-    assert scan_due('2026-10-20T09:40:00', now)                # 1 小時容差內 → 掃
-    assert not scan_due('2026-10-21T09:00:00', now)            # 6 天 → 不掃
+    assert scan_due('2026-10-26T09:00:15', now)                # 滿 1 天（差幾秒）→ 掃
+    assert scan_due('2026-10-26T09:40:00', now)                # 1 小時容差內 → 掃
+    assert not scan_due('2026-10-27T06:00:00', now)            # 3 小時 → 不掃
     a, r, fs = scan_diff({'a', 'b', 'x-free'}, {'a', 'n', 'x-free'}, {'a': 'base', 'b': 'base', 'x-free': 'base'}, '2026-10-27')
     assert a == ['n'] and r == ['b'], (a, r)
     assert fs == {'a': 'base', 'n': '2026-10-27', 'x-free': 'base'}, fs

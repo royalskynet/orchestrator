@@ -35,6 +35,7 @@ git clone https://github.com/royalskynet/orchestrator && cd orchestrator && ./in
 - Model billing tiers are checked before each dispatch; paid models still run but trigger a Telegram warning.
 - The watchdog does not kill an attempt while opencode has a tool subprocess running (usually a slow test), and `dc` raises opencode's bash tool timeout from 120 s to 300 s.
 - `zen-gate` handles Zen free-tier IP blocks (including `FreeTierError` 403s): the block lasts 6 h for the first 3 consecutive rounds, then doubles each round up to 48 h. When it expires, one half-open probe decides whether to reopen.
+- Model list sync (`oc-probe/`, optional): the OpenCode Go `/models` list is fetched daily (one zero-token GET, since 2026-11-06) because Go free models rotate; Zen free-tier live probing has been off since 2026-10-19 (IP flagged as abusive), so `dcq rank` orders models by real job results.
 - Telegram pushes fire only when state lives in the default paths (`~/.dcq`, `~/.jevgate`). Tests that point state at a temp directory stay silent unless `DC_PUSH=1`.
 
 Formerly **dispatch-router** (renamed 2026-10-22); the `dc`/`dcq` commands are unchanged. Use plain `opencode run` if you only need a model to try something once.
@@ -350,17 +351,17 @@ Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`s
   & "C:\Program Files\Git\bin\bash.exe" -i -c "dc /c/path/to/task.md /c/path/to/repo"
   ```
 
-## 週探測（選配 `oc-probe/`）
+## 模型清單同步與探測（選配 `oc-probe/`）
 
 `oc-probe/` 偵測 opencode 模型清單變化，自動改 dr 的清冊，不碰 OmniRoute。安裝：先跑本 repo `./install.sh`，再跑 `oc-probe/install.sh`（macOS launchd）。不裝也能用 dc／dcq，只是名單要手動維護。
 
 | 來源 | 頻率 | 改什麼 |
 |---|---|---|
-| Zen 免費層實打（`oc-free-check`，經 `opencode run`） | 每 7 天，zen-gate 閘外 | `probe.tsv`：排序、GONE 移出 |
-| Go 上游 `/models`（`go-sync`，零 token） | 每 7 天 | `go-models.json`：訂閱層與 `opencode-go/*-free` 增刪 |
+| Zen 免費層實打（`oc-free-check`，經 `opencode run`） | 2026-10-19 起停排程（Zen 判本機 IP 濫用），只剩手動 `oc-probe probe` | `probe.tsv`：排序、GONE 移出 |
+| Go 上游 `/models`（`go-sync`，零 token，一次 GET） | 每天（2026-11-06 起；Go 免費模型會輪換，週掃會漏） | `go-models.json`：訂閱層與 `opencode-go/*-free` 增刪 |
 | @opencode 推文（`oc-probe x`） | 每 4 小時 | `x-pool.tsv`：改名／上下架 |
 
-三者偵測到變化都會跑 `dcq sync-catalog`，把增刪寫回 `catalog/models.tsv`。每日 job 最後跑選配 hook（`~/.config/oc-probe/hook`，存在才跑），給本機自己的後續動作用。
+三者偵測到變化都會跑 `dcq sync-catalog`，把增刪寫回 `catalog/models.tsv`。每日 job 最後跑選配 hook（`~/.config/oc-probe/hook`，存在才跑），給本機自己的後續動作用。沒有實打後 `dcq rank` 不再有「探測批次」，排序改靠真實派工實績；hook 要能接受這種狀態（不要因為缺批次就失敗）。
 
 `dcq rank` 讀 `~/.dcq/logs/probe.tsv`（TSV：時間 provider 模型 狀態 秒數 原因），只用最新一批、≤`DCQ_PROBE_MAX_H`=192 小時（8 天，配合週探測）：
 
