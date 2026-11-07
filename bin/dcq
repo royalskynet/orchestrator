@@ -846,6 +846,9 @@ cmd_add() {
   printf 'TASK=%s\nCWD=%s\nTIER=%s\nORDER=%s\n' "$task" "$cwd" "$tier" "$order" > "$Q/pending/$id.job"
   [ -n "$src" ] && echo "SRC=$src" >> "$Q/pending/$id.job"
   [ -n "${DCQ_SPIN_S:-}" ] && echo "SPIN=$DCQ_SPIN_S" >> "$Q/pending/$id.job"   # 逐張關防空轉（唯讀工單帶 0）
+  # 逐張關 worktree（2026-11-07）：DCQ_WORKTREE=0 入列時記 NOWT=1。為什麼：產出寫在被 .gitignore 擋掉的
+  # 路徑時，worktree 裡寫完、merge 回主 repo 不會帶回（worktree 一刪產出就沒了），這類工單要逐張走序列。
+  [ "${DCQ_WORKTREE:-1}" = 0 ] && echo "NOWT=1" >> "$Q/pending/$id.job"
   # 逐張預算（研究類長工單用，2026-10-21）：JOBMAX＝這張的總時限；SAT＝連續幾次嘗試 cwd 沒有新產出就停
   [ -n "${DCQ_JOB_MAX:-}" ] && echo "JOBMAX=$DCQ_JOB_MAX" >> "$Q/pending/$id.job"
   [ -n "${DCQ_SAT_N:-}" ] && echo "SAT=$DCQ_SAT_N" >> "$Q/pending/$id.job"
@@ -1408,7 +1411,9 @@ claim_one() {
     mv "$f" "$Q/running/$id.job" 2>/dev/null || continue
     cwd="$(sed -n 's/^CWD=//p' "$Q/running/$id.job")"
     # 乾淨的 git cwd → 切到自己的 worktree，鎖的是 worktree 路徑（必唯一）；否則照舊鎖 cwd 序列
-    why="$(wt_reason "$cwd")"
+    # 逐張關 worktree：job 檔有 NOWT=1（入列時 DCQ_WORKTREE=0 記下）就照序列，不切 worktree
+    why="$(sed -n 's/^NOWT=//p' "$Q/running/$id.job" | head -1)"
+    [ "$why" = 1 ] && why="工單指定 DCQ_WORKTREE=0" || why="$(wt_reason "$cwd")"
     if [ -z "$why" ]; then
       if wt_setup "$Q/running/$id.job" "$id" "$cwd"; then
         cwd="$(sed -n 's/^CWD=//p' "$Q/running/$id.job")"
@@ -1565,7 +1570,7 @@ job_brief() {
   printf '%s  result=%s%s%s%s%s\n' "$id" "$st" \
     "$([ "$st" = ok ] || [ "$st" = cancelled ] || echo " rc=${last:-?}")" \
     "$flags$skp" "${merged:+ merged=1}" "${merge:+ merge=$merge}"
-  [ -n "$model" ] && echo "  task: $(sed -n 's/^TASK0=\|^TASK=/p' "$job" | head -1)  model=$model"
+  [ -n "$model" ] && echo "  task: $(sed -n -e 's/^TASK0=//p' -e 's/^TASK=//p' "$job" | head -1)  model=$model"
   [ "$st" = ok ] && [ -z "$flags" ] && return 0
   for out in "$Q"/logs/"$id".*.out; do
     [ -e "$out" ] || continue

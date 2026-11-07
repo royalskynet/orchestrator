@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""oc-stdin-lint <檔案>… — 每處執行 `opencode run`（含 dc 的 "${ocrun[@]}" 陣列展開）都要關 stdin。
+
+判斷：續行（行尾 \\）先合併成一個邏輯指令再判。開關 stdin 的證據（逐個邏輯指令）：
+  shell：</dev/null、0</dev/null、stdin 重導入 /dev/null、`< file` 刻意餵 stdin
+  python：stdin=subprocess.DEVNULL、asyncio create_subprocess_* 的 stdin=DEVNULL/PIPE(讀出來用)+
+  node：stdio:['ignore',…]、spawnSync/execFile 的 input
+ 豁免：行尾或該行有 # oc-stdin-ok。字串常數／註解整行跳過。
+"""
+import re
+import sys
+
+DEVNULL_RE = re.compile(
+    # shell 重導入 /dev/null（含 fd<num> 位置）
+    r"(?:[0-9]?\s*</?null|<\s*/dev/null)"
+)
+PY_DEVNULL = re.compile(r"stdin\s*=\s*(?:asyncio\.)?subprocess\.DEVNULL")
+JS_STDIO = re.compile(r"stdio\s*:\s*\[\s*['\"]ignore['\"]")
+JS_INPUT = re.compile(r"\b(?:input|execFileSync|execFile|runSync)\s*[(:=]|input\s*:")
+ARRAY_EXPAND = re.compile(r"\$\{ocrun\[@?\]\}|\$\{ocrun\[[^]]+\]\}")
+
+EXEMPT = "oc-stdin-ok"
+
+
+def logical_blocks(text):
+    """依續行合併，回 [(起行號, 合併文字)]。heredoc 內容（<<'X' … X）整段當甲字串常數跳過。"""
+    out = []
+    cur, start = [], None
+    heredoc = None  # heredoc 結束標記
+    for i, raw in enumerate(text.split("\n"), 1):
+        if heredoc is not None:
+            if raw.strip() == heredoc:
+                heredoc = None
+            continue
+        line = raw.rstrip()
+        m = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
+        if m and not line.lstrip().startswith("#"):
+            heredoc = m.group(1)
+            out.append((i, line))
+            cur, start = [], None
+            continue
+        cont = line.endswith("\\") and not line.endswith("\\\\")
+        body = line[:-1] if cont else line
+        if start is None:
+            start = i
+        cur.append(body)
+        if not cont:
+            out.append((start, "\n".join(cur)))
+            cur, start = [], None
+    if cur:
+        out.append((start, "\n".join(cur)))
+    return out
+
+
+def is_comment_or_string_only(block):
+    """註解（shell#、py/js //、C /*…*/ 含塊中間行）或整段都在字串常數裡 → 不算呼叫端。"""
+    if block.lstrip().startswith("#"):
+        return True
+    stripped = re.sub(r"/\*.*?\*/", " ", block, flags=re.S)
+    stripped = re.sub(r"^\s*//.*$", " ", stripped, flags=re.M)
+    # C-風格塊註解的中間行（jsdoc ` * …`）：去行首 \* 後整行皆為註解文字
+    if all(re.match(r"^\s*(\*|/\*)", l) or not l.strip() for l in block.split("\n")):
+        return True
+    stripped = re.sub(r'"(?:[^"\\]|\\.)*"', '""', stripped)
+    stripped = re.sub(r"'(?:[^'\\]|\\.)*'", "''", stripped)
+    stripped = re.sub(r"`(?:[^`\\]|\\.)*`", "''", stripped)  # js template literal
+    return not re.search(r"\bopencode\s+run\b|\$\{ocrun\[@?\]\}", stripped)
+
+
+def closed_stdin(block):
+    if EXEMPT in block:
+        return True
+    if DEVNULL_RE.search(block) or "<&-" in block:
+        return True
+    if "0</dev/null" in block or "< /dev/null" in block or "</dev/null" in block:
+        return True
+    if PY_DEVNULL.search(block):
+        return True
+    if JS_STDIO.search(block):
+        return True
+    # node spawn 的 stdio 已标 ['ignore',…]（同一逻辑指令内，跨行合并后才判）
+    if re.search(r"\bstdin\b.*=\s*(?:asyncio\.)?subprocess\.PIPE", block):
+        return True
+    # node execFile/spawnSync 可帶 input（不等於 stdin 開 pipe）
+    if re.search(r"\bexecFile(?:Sync)?\b|\bspawnSync\b", block) and JS_INPUT.search(block):
+        return True
+    return False
+
+
+def is_run_invocation(block):
+    if ARRAY_EXPAND.search(block):
+        return True
+    return re.search(r"\bopencode\s+run\b", block) is not None
+
+
+def check_file(path):
+    findings = []
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except OSError as e:
+        print(f"{path}: 讀不到（{e}）", file=sys.stderr)
+        return [f"{path}:0: unreadable"]
+    for ln, block in logical_blocks(text):
+        if EXEMPT in block:
+            continue
+        if is_comment_or_string_only(block):
+            continue
+        if not is_run_invocation(block):
+            continue
+        if closed_stdin(block):
+            continue
+        findings.append(f"{path}:{ln}: opencode run stdin not closed")
+    return findings
+
+
+def main(argv):
+    if not argv:
+        print("usage: oc-stdin-lint <file>…", file=sys.stderr)
+        return 2
+    findings = []
+    for p in argv:
+        findings.extend(check_file(p))
+    for f in findings:
+        print(f)
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

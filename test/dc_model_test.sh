@@ -67,7 +67,15 @@ chk "限流：窗口過後發，並附被壓筆數"        "$(grep -c '另有 1 
 printf '#!/bin/sh\nexit 1\n' > "$T/bin/hpush"; : > "$T/q/logs/billing.tsv"
 chk "hpush 失敗照派"                     "$(try DC_FREE_MODEL=opencode/kimi-k3)" ran:-
 chk "hpush 失敗也記進 billing.tsv"       "$(grep -c "metered	opencode/kimi-k3" "$T/q/logs/billing.tsv")" 1
-chk "免費模型不進 billing.tsv"              "$(try DC_FREE_MODEL=big-pickle >/dev/null; grep -c big-pickle "$T/q/logs/billing.tsv")" 0
+printf '#!/bin/sh\necho "$*" >> "$PUSH"\n' > "$T/bin/hpush"; : > "$T/q/logs/billing.tsv"; rm -f "$T/q/logs/.billing-tg-last"
+# DC_TG_MUTE（預設 deepseek flash）：照派、照落帳、不發 TG；設空字串恢復警示
+chk "deepseek flash 預設靜音"               "$(try DC_FREE_MODEL=opencode-go/deepseek-v4.1-flash)" ran:-
+chk "靜音模型照樣落帳"                      "$(grep -c "sub	opencode-go/deepseek-v4.1-flash" "$T/q/logs/billing.tsv")" 1
+chk "DC_TG_MUTE= 空字串恢復警示"            "$(try DC_TG_MUTE= DC_FREE_MODEL=opencode-go/deepseek-v4.1-flash)" ran:sub
+rm -f "$T/q/logs/.billing-tg-last"
+chk "靜音不影響其他訂閱模型"                "$(try DC_FREE_MODEL=opencode-go/glm-5.3)" ran:sub
+printf '#!/bin/sh\nexit 1\n' > "$T/bin/hpush"
+chk "免費模型不進 billing.tsv"             "$(try DC_FREE_MODEL=big-pickle >/dev/null; grep -c big-pickle "$T/q/logs/billing.tsv")" 0
 # omniroute 沒 key：要在派工前就停，不是送空 key 去吃 401
 chk "omniroute 沒 key 不派"                 "$(try OMNIROUTE_API_KEY= HOME="$T" DC_FREE_MODEL=omniroute/free-tools)" rejected:-
 

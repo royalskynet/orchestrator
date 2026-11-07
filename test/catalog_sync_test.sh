@@ -29,8 +29,9 @@ SYNC_ADD_SUB="opencode-go/s-rec" SYNC_ADD_ZEN="zen-b-free" python3 "$CS" "$T/a.t
 chk "移出：removed 且 dc_id 清空"          "$(row "$T/a.tsv" opencode-go/go-b-free)" "removed|"
 chk "新增 Go 免費排在 opencode-go 段尾、nim-pool 前" \
   "$(pos "$T/a.tsv" opencode-go/go-c-free)<$(pos "$T/a.tsv" omniroute/nim-pool)" "4<6"
-chk "removed 列原地恢復"                   "$(row "$T/a.tsv" opencode-go/old-free)" "ok|opencode-go/old-free"
-chk "omniroute 紀錄列不被當成恢復"         "$(row "$T/a.tsv" opencode-go/s-rec | tr ' ' '\n' | sort | tr '\n' ' ')" "ok| ok|opencode-go/s-rec "
+chk "removed 列原地恢復"                   "$(row "$T/a.tsv" opencode-go/old-free)" "unverified|opencode-go/old-free"
+chk "omniroute 紀錄列不被當成恢復"         "$(row "$T/a.tsv" opencode-go/s-rec | tr ' ' '\n' | sort | tr '\n' ' ')" "ok| unverified|opencode-go/s-rec "
+chk "自動新增標 unverified（尚無實測不得標 ok）" "$(row "$T/a.tsv" opencode-go/go-c-free)" "unverified|opencode-go/go-c-free"
 chk "Zen 新增排在 Zen 段尾"                "$(pos "$T/a.tsv" zen-b-free)" "2"
 
 # 2. 沒有變動就不改檔

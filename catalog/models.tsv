@@ -94,7 +94,7 @@ sub	opencode-run	opencode-go/step-5-preview	ok	run 10-21 ok 3s	Go 訂閱；自�
 sub	opencode-run	opencode-go/minimax-m3.1-flash	ok	go-sync 週掃 10-23	Go 訂閱；自動新增，尚無實測	opencode-go/minimax-m3.1-flash	any
 sub	opencode-run	opencode-go/gemini-4-argon	ok	go-sync 週掃 10-31	Go 訂閱；自動新增，尚無實測	opencode-go/gemini-4-argon	any
 sub	opencode-run	opencode-go/kimi-k3.1-pro	ok	go-sync 週掃 10-31	Go 訂閱；自動新增，尚無實測	opencode-go/kimi-k3.1-pro	any
-sub	opencode-run	opencode-go/hy4	ok	go-sync 週掃 11-06	Go 訂閱；自動新增，尚無實測	opencode-go/hy4	any
+sub	opencode-run	opencode-go/hy4	unverified	go-sync 週掃 11-06	Go 訂閱；自動新增，尚無實測	opencode-go/hy4	any
 sub	omniroute	opencode-go/step-5-preview	ok	calllog 1/1	Go 訂閱		any
 api	opencode-run	opencode/<Zen 付費 80+ 個>	unverified	opencode models	扣 Zen 餘額：Claude／GPT-5～6.1／Gemini 3.x／Grok／Kimi／Qwen3.8-max 等		any
 api	omniroute	openai/*（OpenAI 連線）	unverified	calllog 只有 connection-test	Hermes 語音用 whisper-1／gpt-4o-mini-tts；按量計費		any

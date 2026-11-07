@@ -247,7 +247,9 @@ if [ "$t" != free ]; then
   # ponytail: 併發 dc 讀同一戳記有競態，最壞多發一則，不值得上鎖
   ST="$BL/.billing-tg-last"; now=$(date +%s); n=$(wc -l < "$BL/billing.tsv" | tr -d ' ')
   last=$(stat -c %Y "$ST" 2>/dev/null || stat -f %m "$ST" 2>/dev/null || echo 0)
-  if [ $((now - last)) -ge "${DC_TG_EVERY:-600}" ]; then
+  # DC_TG_MUTE：常態使用的訂閱模型只落帳不發 TG（11-07 使用者：deepseek flash 天天用，通知是噪音）；空字串＝全部照發
+  _mute=0; for _x in ${DC_TG_MUTE-opencode-go/deepseek-v4.1-flash}; do [ "$_x" = "$m" ] && _mute=1; done
+  if [ "$_mute" = 0 ] && [ $((now - last)) -ge "${DC_TG_EVERY:-600}" ]; then
     prev=$(cat "$ST" 2>/dev/null || echo "$((n - 1))"); skipped=$((n - 1 - prev))
     [ "$skipped" -gt 0 ] && msg="${msg}（另有 ${skipped} 筆被限流，見 billing.tsv）"
     echo "$n" > "$ST"
@@ -440,13 +442,13 @@ trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf" "$pintmp"' EXIT
 # opencode v2（2026-10）拿掉 --pure／--dir、log-level 改小寫（公開 repo 692489e）；1.18.x 照舊。
 # 看 run --help 有沒有 --pure 決定（0.2s），工作目錄一律再 cd 一次，兩版都對。
 # DC_OC_V2=0／1 可跳過偵測（測試的假 opencode 不認 --help）
-case "${DC_OC_V2:-}" in 0) oc_v2=0 ;; 1) oc_v2=1 ;; *) if opencode run --help 2>&1 | grep -q -- '--pure'; then oc_v2=0; else oc_v2=1; fi ;; esac
+case "${DC_OC_V2:-}" in 0) oc_v2=0 ;; 1) oc_v2=1 ;; *) if opencode run --help 2>&1 </dev/null | grep -q -- '--pure'; then oc_v2=0; else oc_v2=1; fi ;; esac
 # v2 的 run 預設交給共用背景服務（opencode serve --service）：服務卡死時 run 零輸出乾等（10-25 M2 服務跑 8h 後
 # 每張都 60s 判不開工，--standalone 同單 10s 過），--print-logs 也只有 --standalone 才帶服務端 ERROR log（額度／限流偵測靠它）。
 # OPENCODE_CONFIG_CONTENT 在 v2.1.2 --standalone 仍生效（10-25 M2 實測 instructions 有讀到）。
 if [ "$oc_v2" = 0 ]; then ocflags=(--pure --log-level ERROR --dir "$d"); else ocflags=(--standalone --log-level error); fi
 # claude/* 改叫同目錄的 claude-exec（吃同一組參數，opencode 專屬旗標忽略）
-case "$m" in claude/*) ocrun=("$(dirname "$(readlink -f "$0")")/claude-exec") ;; *) ocrun=(opencode run) ;; esac
+case "$m" in claude/*) ocrun=("$(dirname "$(readlink -f "$0")")/claude-exec") ;; *) ocrun=(opencode run) ;; esac   # oc-stdin-ok：實際執行在下方 exec 區塊（"$@" </dev/null）
 # 鐵則（2026-10-26 使用者定）：opencode free 層（Zen 無斜線／opencode/*、opencode-go/*-free）只准經 opencode CLI 呼叫，
 # 禁止 API 直打（Zen 免費閘認 opencode 客戶端，直打會被判濫用鎖 IP）。以後誰改執行器都要先過這道閘；test/oc_cli_only_test.sh 守。
 case "$m" in */*) case "$m" in opencode/*|opencode-go/*-free) ocfree=1 ;; *) ocfree=0 ;; esac ;; *) ocfree=1 ;; esac
@@ -470,7 +472,7 @@ fi
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。
 驗收區塊在派工前已被複製釘住並逐行比對：改它只會判 exit 3 篡改，不可能讓你過關。
 驗收區塊本身有誤（怎麼做都不可能通過）時，保留驗收原樣，輸出一行 DC_TASK_DEFECT: <驗收行號> <理由> 後立即結束。" \
-  "${ocflags[@]}" --print-logs -f "$f" --title "dc: $(basename "$f")" "$@"
+  "${ocflags[@]}" --print-logs -f "$f" --title "dc: $(basename "$f")" "$@" </dev/null
   echo $? > "$rcf"; } 2>&1 | tee "$out" &
 teepid=$!
 rl=0; started=0; ts=$(date +%s)

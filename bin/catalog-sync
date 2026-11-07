@@ -48,7 +48,7 @@ def apply(lines, add_zen, add_gofree, add_sub, rm, source, today):
             return
         for i, f in rows:  # 同一模型曾被移出 → 原列復用（只認 removed；dc_id 空的 omniroute 紀錄列不算）
             if f[2] == model and f[0] == billing and f[3] == "removed" and f[1] == "opencode-run":
-                f[3], f[6] = "ok", dc_id
+                f[3], f[6] = "unverified", dc_id  # ok＝7 天內有成功紀錄（清冊表頭），同步只知上游有、不知能不能用
                 f[5] = f"{f[5]}；{today} 自動恢復（{source}）"
                 out[i] = "\t".join(f) + "\n"
                 changes.append(f"恢復 {dc_id}")
@@ -57,7 +57,7 @@ def apply(lines, add_zen, add_gofree, add_sub, rm, source, today):
         # 插在同層同類最後一列之後（排位與 dcq 動態結果一致）；找不到同類就放檔尾
         anchor = max((i for i, f in rows if f[0] == billing and f[6] and kind(f[6]) == kind(dc_id)),
                      default=len(out) - 1)
-        after.setdefault(anchor, []).append("\t".join([billing, "opencode-run", model, "ok", f"{source} {today}",
+        after.setdefault(anchor, []).append("\t".join([billing, "opencode-run", model, "unverified", f"{source} {today}",
                                                        f"{note}；自動新增，尚無實測", dc_id, "any"]) + "\n")
         changes.append(f"新增 {dc_id}")
         active.add(dc_id)

@@ -257,6 +257,7 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 - 非 git cwd 不看。
 - `.out` 出現 `dc: 驗收 →` 之後不看，慢驗收不會被誤殺。
 - 唯讀工單（只產報告到 cwd 外）在 git cwd 裡跑超過 420s 會被誤殺：入列時帶 `DCQ_SPIN_S=0 dcq add ...`，這張就不看（記成工單的 `SPIN=0`）。
+- 產出寫在 cwd 內被 `.gitignore` 擋掉的路徑（如 `state/`、`workorders/`）的工單不要切 worktree（merge 帶不回，worktree 一刪產出就沒了）：入列時帶 `DCQ_WORKTREE=0 dcq add ...`，記成工單的 `NOWT=1`，這張照舊在同目錄序列跑。
 
 ### 清冊與難度分層（2026-10-19）
 
