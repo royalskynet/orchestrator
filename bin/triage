@@ -5,6 +5,7 @@
 set -u
 task="${1:-}"
 [ -n "$task" ] || { echo "用法：triage <task.md>" >&2; exit 2; }
+case "$task" in /*) ;; *) task="$PWD/$task" ;; esac  # 下面會 cd 進 jev-gate 目錄，相對路徑會讀不到（11-07）
 J="${JEV_GATE_DIR:-$HOME/dev/jev-gate-mcp}"
 if [ ! -f "$J/agent-glue/src/triage.js" ] || [ ! -r "$task" ]; then echo mid; exit 0; fi
 to=""; command -v timeout >/dev/null && to="timeout ${TRIAGE_TIMEOUT_S:-20}"
