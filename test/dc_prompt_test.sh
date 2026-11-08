@@ -4,7 +4,7 @@
 # 用假的 opencode 記下它實際收到的環境變數，不打上游、不發 TG。
 set -u
 . "$(dirname "$0")/env.sh"
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 DC="$REPO/bin/dc"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DEBUG_MARK="$T/debug.mark"
