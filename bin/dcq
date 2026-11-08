@@ -26,6 +26,13 @@ SELF_REAL="$(readlink -f "$0")"
 SELF_M0="$(stat -c %Y "$SELF_REAL" 2>/dev/null || stat -f %m "$SELF_REAL" 2>/dev/null || echo 0)"
 
 Q="${DCQ_HOME:-$HOME/.dcq}"
+# 自動起的 runner 放哪個 tmux server（#22）：有 DCQ_TMUX 就照它；沒設時正式佇列用 dcq，
+# 其他佇列（測試的暫存 DCQ_HOME、別人的佇列）用 dcq-<cksum>，不碰正式 socket。
+dcq_sock() { :
+  [ -n "${DCQ_TMUX:-}" ] && { echo "$DCQ_TMUX"; return; }
+  [ "$Q" = "$HOME/.dcq" ] && { echo dcq; return; }
+  echo "dcq-$(printf %s "$Q" | cksum | cut -d' ' -f1)"
+}
 # 2026-10-19 起各層預設名單一律從清冊 catalog/models.tsv 組（第 7 欄 dc_id、第 8 欄 fit），不再寫死在這裡；
 # 下面歷史註解裡的名單只是當時的實測紀錄。DCQ_POOL_* 有設的照舊整條覆寫。
 CAT="${DCQ_CATALOG:-$(dirname "$(readlink -f "$0")")/../catalog}"
@@ -64,6 +71,9 @@ POOL_ZEN="${DCQ_POOL_ZEN-$(cat_pool free zen)}"
 # 2026-10-09 依 gaps.tsv＋runner.log 重排：longcat 20 跑 8 停滯（40%）、PASS 3；nemotron-3-ultra
 # 11 跑 0 停滯、PASS 4，最大靜默 153s。longcat 移到整個免費層最後，仍排在付費層之前（免費優先）。
 MODELS="${DCQ_MODELS:-$POOL_ZEN${POOL_GO:+ $POOL_GO}}"
+# #23 逐單指定模型（job 檔的 MODELS=）用同一支 fit_pool，但 fit_pool 的 EASY_ONLY 過濾要關：
+# codex/* 沒在清冊 fit 欄，有被硬單挑過的會在 EASY_ONLY，指定它的單不能反被自己剔掉。
+JOB_FIT=1   # 0＝fit_pool 不套難度過濾（逐單指定模型用）
 # 自動重排免費層（每次 dcq 啟動都算，零 token）：讀 gaps.tsv 每隻最近 RANK_WIN 筆，扣掉 rc=2 與 why=upstream
 # （工單契約錯，不算模型的帳）。樣本 ≥RANK_MIN 的才算「合格」：
 #   - 停滯率 ≥RANK_STALL_PCT% → 降到懲罰層 POOL_PEN（免費層之後、兜底層之前；2026-10-09 起，原本在免費層最後）
@@ -667,6 +677,7 @@ not_in() {
 }
 # hard 工單濾掉 EASY_ONLY（清冊 fit=easy／easy-only），mid 工單濾掉 EASY_STRICT（fit=easy-only）；easy 原樣
 fit_pool() {
+  [ "${JOB_FIT:-1}" = 1 ] || { echo "$1"; return; }   # 逐單指定模型：呼叫端明點的，不套難度過濾
   case "${JOB_TIER:-}" in hard) not_in "$EASY_ONLY" "$1" ;; mid) not_in "$EASY_STRICT" "$1" ;; *) echo "$1" ;; esac
 }
 # $2 裡名稱含 $1（不分大小寫）的模型，保持順序、去重（派o <名稱>＝DCQ_PREFER）
@@ -758,8 +769,34 @@ oc_patch() {
     esac
   done | jq -s 'reduce .[] as $x ({}; . * $x)'
 }
+# #22：正式 socket 上的 runner 若不是指正式佇列（測試漏設 DCQ_AUTOSTART=0 留下的），報出來；--fix 收掉。
+# 只看 `tmux -L dcq` 的 run session，不開不 kill 別的 socket。
+runner_strays() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  local raw home_real
+  raw="$(tmux -L dcq list-panes -t run -F '#{pane_start_command}' 2>/dev/null | grep -o 'DCQ_HOME=[^ ]*' | sed 's/^DCQ_HOME=//' | tr -d "'\"")"
+  [ -n "$raw" ] || return 0
+  # 不 eval 執行 pane 裡的命令：只還原 printf %q 的 `\ `（空格）當唯讀字串比對
+  home_real="$(cd "$HOME/.dcq" 2>/dev/null && pwd -P)"
+  printf '%s\n' "$raw" | sed 's/\\ / /g' | while IFS= read -r h; do
+    [ "$(cd "$h" 2>/dev/null && pwd -P)" = "$home_real" ] || echo "$h"
+  done
+}
 cmd_doctor() {
   local off bad ocj="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+  local strays="" fixes
+  strays="$(runner_strays)"
+  if [ -n "$strays" ]; then
+    if [ "${1:-}" = --fix ]; then
+      # 只有整台 server 上每一格都是雜項（一台 server 一個 run session）才收掉 run session；
+      # 混了正式 runner 就只報不殺，免得收掉別人的佇列
+      if [ -z "$(tmux -L dcq list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -v -F -f <(printf '%s\n' "$strays" | sed 's/^/DCQ_HOME=/'))" ]; then
+        tmux -L dcq kill-session -t run >/dev/null 2>&1 && echo "已收掉 tmux -L dcq 上指向 $strays 的 runner"
+        strays="$(runner_strays)"
+      fi
+    fi
+    [ -z "$strays" ] || { echo "FAIL tmux -L dcq 上有 runner 指向非正式佇列（測試漏設 DCQ_AUTOSTART=0／DCQ_TMUX？）：$(echo "$strays" | tr '\n' ' ')"; return 1; }
+  fi
   pool_summary; off="$(miss_split off)"; bad="$(miss_split)"
   [ -z "$off" ] || echo "略過 enabled／disabled_providers 刻意關掉的：$off"
   if [ -n "$bad" ] && [ "${1:-}" = --fix ]; then
@@ -782,7 +819,9 @@ cmd_plan() {
     local f p pe t z s a c
     case "$tier" in easy) f="$MODELS_easy" pe="$PEN_easy" z="$ZERO_easy" ;; hard) f="$MODELS_hard" pe="$PEN_hard" z="$ZERO_hard" ;; *) f="$MODELS_mid" pe="$PEN_mid" z="$ZERO_mid" ;; esac
     f="$(fit_pool "$f")"; pe="$(oc_first "$(fit_pool "$pe")")"; z="$(oc_first "$(fit_pool "$z")")"; t="$(fit_pool "$POOL_TAIL")"; s="$(fit_pool "$POOL_PAID")"; a="$(fit_pool "$POOL_API")"; c=""
-    if [ -n "${DCQ_PREFER:-}" ]; then
+    if [ -n "${DCQ_MODELS:-}" ]; then
+      echo "  0 逐單指定模型：$(fit_pool "$DCQ_MODELS")"
+    elif [ -n "${DCQ_PREFER:-}" ]; then
       local ph; ph="$(oc_first "$(pref_hits "$DCQ_PREFER" "$f $pe $z")")"
       if [ -n "$ph" ]; then f="$(not_in "$ph" "$f")"; pe="$(not_in "$ph" "$pe")"; z="$(not_in "$ph" "$z")"; echo "  0 優先「${DCQ_PREFER}」：$ph"
       else echo "  ⚠ 優先「${DCQ_PREFER}」：免費層沒有名稱相符的模型，照原順序"; fi
@@ -889,7 +928,11 @@ cmd_add() {
     [ -n "$(pref_hits "$DCQ_PREFER" "$MODELS_easy $MODELS_mid $MODELS_hard $PEN_easy $PEN_mid $PEN_hard $ZERO_easy $ZERO_mid $ZERO_hard")" ] \
       || echo "dcq: ⚠ 優先「${DCQ_PREFER}」在免費層找不到相符模型，照原順序" >&2
   fi
-  echo "dcq: 難度 ${tier}，順序 ${order}${DCQ_PREFER:+，優先 $DCQ_PREFER}" >&2
+  # #23 逐單指定模型：照 PREFER 寫法記進 job 檔，runner 跑這張只用這份清單（呼叫端的環境不帶到 runner）
+  if [ -n "${DCQ_MODELS:-}" ]; then
+    echo "MODELS=$DCQ_MODELS" >> "$Q/pending/$id.job"
+  fi
+  echo "dcq: 難度 ${tier}，順序 ${order}${DCQ_PREFER:+，優先 $DCQ_PREFER}${DCQ_MODELS:+，模型 $DCQ_MODELS}" >&2
   if ! runner_alive; then
     if [ "${DCQ_AUTOSTART:-1}" = "1" ] && command -v tmux >/dev/null 2>&1; then
       if ( JOBS="${DCQ_JOBS:-2}"; export JOBS; cmd_start ) >&2; then
@@ -1155,10 +1198,13 @@ run_job() {
   case "$JOB_TIER" in easy) pool="$MODELS_easy" pen_pool="$PEN_easy" zero_pool="$ZERO_easy" ;; hard) pool="$MODELS_hard" pen_pool="$PEN_hard" zero_pool="$ZERO_hard" ;;
     *) JOB_TIER=mid pool="$MODELS_mid" pen_pool="$PEN_mid" zero_pool="$ZERO_mid" ;; esac
   pool="$(fit_pool "$pool")"; pen_pool="$(oc_first "$(fit_pool "$pen_pool")")"; zero_pool="$(oc_first "$(fit_pool "$zero_pool")")"
+  # #23 逐單指定模型：有 MODELS= 的單只用那份清單（不套各層、不套 PREFER、不升級）；沒帶的照舊
+  local jm; jm="$(sed -n 's/^MODELS=//p' "$jobfile")"
+  [ -n "$jm" ] && { local JOB_FIT=0; pool="$(fit_pool "$jm")"; }
   # PREFER：免費／懲罰／冷宮裡名稱相符的（opencode 先、freepool 後）排在免費層最前，跨 freepool 邊界不必等 opencode 層用盡；訂閱與 API 不動
   local prefer ph=""
   prefer="$(sed -n 's/^PREFER=//p' "$jobfile")"
-  if [ -n "$prefer" ]; then
+  if [ -n "$prefer" ] && [ -z "$jm" ]; then
     ph="$(oc_first "$(pref_hits "$prefer" "$pool $pen_pool $zero_pool")")"
     [ -z "$ph" ] || { pool="$(not_in "$ph" "$pool")"; pen_pool="$(not_in "$ph" "$pen_pool")"; zero_pool="$(not_in "$ph" "$zero_pool")"; }
     echo "dcq[$id] 優先「${prefer}」：${ph:-（免費層無相符，照原順序）}" >&2
@@ -1173,6 +1219,7 @@ run_job() {
     sub) cl_pool="$(fit_pool "$POOL_CLAUDE")"
       [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1; echo 'PAID=1' >> "$jobfile"; } ;;
   esac
+  [ -n "$jm" ] && { free_main=""; paid_pool=""; api_pool=""; cl_pool=""; echo "dcq[$id] 逐單指定模型：${pool}" >&2; }
   t0=$(now)
 
   while true; do
@@ -1670,7 +1717,7 @@ cmd_status() {
 # 跟 deep-run 的 tmux -L deep 同一招。看進度用 status 或 logs/runner.log。
 cmd_start() {
   command -v tmux >/dev/null || die "dcq start 需要 tmux"
-  local sock="${DCQ_TMUX:-dcq}" self
+  local sock; sock="$(dcq_sock)"; local self
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   tmux -L "$sock" has-session -t run 2>/dev/null && die "dcq: 已有 runner 在跑（tmux -L $sock attach -t run）"
   tmux -L "$sock" new-session -d -s run \
@@ -1807,7 +1854,7 @@ usage() {
   DCQ_POOL_GO        舊介面，有設才串在 ZEN 後（預設空，longcat 已併進清冊免費層）
   DCQ_POOL_ZEN       主池手排（預設＝清冊 billing=free、dc_id 無斜線的列，依列序；
                      實際順序由 autorank 依 gaps.tsv 重算，看 dcq rank）
-  DCQ_MODELS         有設就整條覆寫兩個免費池（舊介面）
+  DCQ_MODELS         有設就整條覆寫兩個免費池（舊介面；dcq add 時有設就逐單寫進工單，這張只用這份清單，不套各層）
   DCQ_POOL_PAID      訂閱層（付費），免費／懲罰／兜底全用盡才用（預設＝清冊 billing=sub 有 dc_id 的列；
                      只准 opencode-go/ 前綴；設空字串＝永不動用）
   DCQ_POOL_TAIL      兜底層，免費與懲罰層用盡才用、排在訂閱層之前（預設＝清冊 billing=free、dc_id 有斜線的列；

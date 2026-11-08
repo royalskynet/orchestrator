@@ -142,7 +142,7 @@ dc <task.md> [cwd] [-- <opencode run 原生旗標>...]
 
 環境變數：`DC_FREE_EXTRA`、`DC_FREE_MODEL`、`DC_SKIP_LINT=1`、`DC_BIN`、`DC_LOCK_WAIT`、`DC_NO_TIMEOUT_WARN=1`。
 `DC_MODEL=codex/default dc <task> <cwd>` 派 Codex 執行人（判定鏈同 O）；`codex/<model>` 指定模型，`default` 沿用 Codex CLI 設定。`bin/codex-exec` 預設 `--sandbox danger-full-access`（Codex 的 `workspace-write` 把 `.git` 設唯讀，執行人無法 commit），對話紀錄與憑證改由 dc 外層 `sandbox-exec` 擋，跟 opencode 一樣；`CODEX_EXEC_SANDBOX` 可覆寫，沿用既有登入；`CODEX_BIN` 可替換執行檔。
-`DCQ_MODELS=codex/default dcq add <task> <cwd> mid` 可指定佇列單模型，不新增 fallback 層。
+`DCQ_MODELS=codex/default dcq add <task> <cwd> mid` 可指定佇列單模型，不新增 fallback 層。`DCQ_MODELS` 在 add 時逐單寫進工單，之後由任何 runner 跑都只用那份清單；沒帶的單照 runner 的 `DCQ_MODELS`／預設池。（runner 自動起在 `-L dcq` 只限正式佇列 `~/.dcq`，其他佇列與測試走 `dcq-<cksum>`／`DCQ_TMUX`，測試 runner 不佔正式 socket；`dcq doctor` 會抓跑錯地方的 runner。）
 `DC_FREE_MODEL` 含 `/` 時當完整 `provider/model` 用，否則自動補 `opencode/` 前綴。
 
 ### cwd 互斥鎖在 `dc`，不只在 `dcq`

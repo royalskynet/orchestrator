@@ -12,6 +12,8 @@ export DC_FREECHECK=off DC_NEGCTL=0 DCQ_POLL_S=1
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"
 export DCQ_FREE_ROUNDS=1 DCQ_POOL_PAID="" DCQ_POOL_TAIL="" DCQ_ORDER=default
 export TMUX_TRACE="$T/tmux_trace"; : > "$TMUX_TRACE"
+# 這支就是要測自動啟動：env.sh 預設關掉，這裡開回來（#22）
+export DCQ_AUTOSTART=1
 
 cat > "$T/bin/dc" <<'EOF'
 #!/usr/bin/env bash

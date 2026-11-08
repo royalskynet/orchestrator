@@ -33,7 +33,7 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 ## 派 Codex
 
 `DC_MODEL=codex/default dc <task> <cwd>`（判定鏈同 O）。`codex/<model>` 指定模型；`default` 沿用 Codex 設定。需先完成 Codex CLI 登入，扣 ChatGPT 訂閱額度。
-佇列可用 `DCQ_MODELS=codex/default dcq add <task> <cwd> mid`；不新增 Codex fallback 層。
+佇列可用 `DCQ_MODELS=codex/default dcq add <task> <cwd> mid`；不新增 Codex fallback 層。`DCQ_MODELS` 在 add 時逐單生效（之後由任何 runner 跑都只跑那張清單），沒帶的單照 runner 的 `DCQ_MODELS`／預設池。
 
 ## Cheat sheet
 

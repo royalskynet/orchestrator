@@ -1,5 +1,12 @@
 # DEVLOG
 
+## 2026-11-08：dcq runner 隔離（#22）、逐單指定模型（#23）、dcq_tier 偶發紅（fixindex 11844）
+
+- **#22**：`test/env.sh` 統一 `DCQ_AUTOSTART=0 DCQ_TMUX=dcqtest$$`，測試 runner 不再佔正式 socket `-L dcq`；`dcq_sock()` 讓沒設 `DCQ_TMUX` 時只有正式佇列 `~/.dcq` 用 `dcq`，其他佇列走 `dcq-<cksum>`。`dcq doctor`／`--fix` 抓並收掉指向別處的 runner（混了正式 runner 只報不殺）。
+- **11844**：根因是 `dcq add` 自動起的 runner 與測試自己的 `dcq run` 搶同一暫存佇列，派單順序不定；隨 #22 消失。
+- **#23**：`dcq add` 帶 `DCQ_MODELS` 時照 `PREFER` 寫法寫 `MODELS=` 進 job 檔，runner 遇到只跑那份清單、不套各層／`PREFER`／不升級；runner 自己的 `DCQ_MODELS` 照舊。
+- 新增 `test/dcq_isolation_test.sh`、`test/dcq_models_job_test.sh`（假 tmux／假 dc）。
+
 ## 2026-11-08：Codex 執行人
 
 - 新增 `bin/codex-exec`，將 Codex JSONL 轉為 dc 開工、文字、指令與錯誤行；default 沿用設定模型，規則前置 prompt，使用 CLI 自帶 sandbox。

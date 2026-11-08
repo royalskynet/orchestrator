@@ -4,3 +4,6 @@
 for _v in $(compgen -e | grep -E '^(DC|DCQ|JEV|OPENCODE)_'); do unset "$_v"; done; unset _v
 export XDG_CONFIG_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/xdg-empty"
 export DC_OC_V2=0  # 假 opencode 不認 run --help，跳過旗標偵測
+# issue #22：測試一律不自動起 runner、不碰正式 socket -L dcq；要測自動啟動的（dcq_autostart_test 等）
+# 自己 source 後設回 DCQ_AUTOSTART=1／自己的 DCQ_TMUX。
+export DCQ_AUTOSTART=0 DCQ_TMUX="dcqtest$$"
