@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+{ # 整段讀入，避免執行中就地改寫造成偏移。
+# gate preflight <task.md> <cwd> <pfdir>：派工前判定與快照；10 表示 SKIPPED。
+# gate judge <task.md> <cwd> <pfdir> [--k N]：範圍、作弊、pin 驗收與回歸判定。
+# DC_GATE_OUTPUT 可指定執行人輸出供 DC_TASK_DEFECT 判定。
+# DC_GATE_SCOPE=only|done 僅供 dc 保留範圍檢查早於上游錯誤的判定順序。
+# exit：0 PASS／1 lint 失敗／2 契約錯／3 pin 篡改／4 回歸／5 越界／6 作弊。
+set -u
+mode="${1:-}"; f="${2:-}"; d="${3:-}"; pf_dir="${4:-}"
+case "$mode" in preflight|judge) ;; *) echo '用法：gate preflight|judge <task.md> <cwd> <pfdir> [--k N]' >&2; exit 2 ;; esac
+[ -f "$f" ] && [ -d "$d" ] && [ -n "$pf_dir" ] || { echo 'dc: gate 需要 task、cwd 與 pfdir' >&2; exit 2; }
+f="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
+d="$(cd "$d" && pwd)"
+verify_k="${DC_VERIFY_K:-2}"
+shift 4
+if [ "$#" -gt 0 ]; then
+  [ "$mode" = judge ] && [ "$#" = 2 ] && [ "$1" = --k ] || exit 2
+  verify_k="$2"
+fi
+case "$verify_k" in ''|*[!0-9]*) exit 2 ;; esac
+[ "$verify_k" -gt 0 ] || exit 2
+OCBIN="${DC_BIN:-$(dirname "$(readlink -f "$0")")}"
+WV="$OCBIN/wo-verify"; DL="$OCBIN/deep-lint"
+[ -x "$WV" ] || { echo "dc: 找不到 wo-verify：${WV}" >&2; exit 2; }
+mkdir -p "$pf_dir" || exit 2
+pf_dir="$(cd "$pf_dir" && pwd)"
+reg_base="$pf_dir/regress.base"
+_scope_line() {  # $1=行標籤正規式。後面接 `[[:space:]]*[:：]`：`writes:` 不會吃到 `writes!:`，反之亦然
+  # 先只吃 ASCII 冒號：sed 的範圍式（[Ss]）碰上多一位元組字元（全形冒號）會報 illegal byte sequence；
+  # 吃到就完事，吃不到才換全形冒號（用 awk，正規式由變數傳，不給 sed 看全形字元）。
+  local l
+  l="$(sed -n -E "s/^$1[[:space:]]*:[[:space:]]*//p" "$f" | head -1)"
+  [ -z "$l" ] && l="$(awk -v re="^$1[ \t]*$(_FW)[ \t]*" '{ s = $0; if (sub(re, "", s)) { print s; exit } }' "$f")"
+  printf '%s\n' "$l" | sed 's/,/ /g; s/，/ /g'; }
+_FW() { printf '\357\274\232'; }
+_scope_writes() { _scope_line '[Ww][Rr][Ii][Tt][Ee][Ss]'; }          # 只認 writes:（writes! 後面是 !，不符 [space:：]）
+_scope_strict() { _scope_line '[Ww][Rr][Ii][Tt][Ee][Ss]!'; }
+# regress: <指令>（#21）：基準檔案跨模型重試共用，必須是第一次派工前 cwd 的狀態。
+REG_LINE="$(_scope_line '[Rr][Ee][Gg][Rr][Ee][Ss][Ss]')"
+REG_TIMEOUT="${DC_REGRESS_TIMEOUT:-600}"
+# 只留 `<rc> <測試名>` 行；逾時用既有的 timeout（沒有就不限時，DC_REGRESS_TIMEOUT 不生效）
+if command -v timeout >/dev/null 2>&1; then
+  reg_run() { ( cd "$d" && exec timeout "$REG_TIMEOUT" bash -c "$REG_LINE" ) 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+ [^[:space:]]' || true; }
+else
+  reg_run() { ( cd "$d" && exec bash -c "$REG_LINE" ) 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+ [^[:space:]]' || true; }
+fi
+# ponytail: 範圍白名單沿用空白分隔；若需支援含空白路徑，改用結構化工單欄位。
+_scope_changed() {
+  { git -C "$d" diff --no-renames --name-only --relative "$scope_head" -- 2>/dev/null; git -C "$d" ls-files -o --exclude-standard 2>/dev/null; } | sort -u
+}
+
+if [ "$mode" = preflight ]; then
+  pf_pin=""
+  [ ! -f "$pf_dir/pin" ] || pf_pin="$pf_dir/pin"
+# 沒有可跑的驗收區塊就不派工：模型做完也無法判定成敗，等於燒時間換一個不知道對不對的結果。
+# 有憑證就不重跑 lint：第一次已經過了，再跑一次只是讓換模型的嘗試白等。
+lint_ok=0
+if [ -z "$pf_pin" ] && [ "${DC_SKIP_LINT:-0}" != 1 ] && [ -x "$DL" ]; then
+  "$DL" "$f" || { echo "dc: deep-lint 未過（DC_SKIP_LINT=1 可強制派工）" >&2; exit 1; }
+  lint_ok=1
+fi
+"$WV" "$f" --dry >/dev/null 2>&1 || { echo "dc: 驗收區塊語法錯，wo-verify --dry 失敗" >&2; exit 2; }
+
+# --- 評分器釘住（pin）：派工前先把驗收腳本抽出來存一份 ------------------------
+# 工單檔在執行人手上，驗收區塊也在裡面：他改得到的評分器，他早晚會改到過關
+# （fixindex 0372 §4 偽造 git status、0373 在 fixsnap 植入刪檔後門 + 偽造註解）。
+# executor-rules.md 第 8 條「不修改驗收區塊」是提示詞，本機實測 Documentation 層
+# 符合率 ≈ 0%。這裡改成機械偵測：驗收跑 pin 這份，並比對工單當下的版本，不一致 exit 3。
+# pintmp＝這次自己抽的暫存檔（EXIT 時刪）；pin＝要餵給 wo-verify --pinned 的那份。
+# 有前置檢查憑證就沿用憑證（不重新 --dump：重抽等於把前一隻模型改過的驗收區塊
+# 釘成新基準）；憑證本身不能被 EXIT trap 刪掉，所以刪的對象是 pintmp 不是 pin。
+pintmp="$(mktemp)" || { echo "dc: mktemp 失敗（pin）" >&2; exit 2; }
+trap 'rm -f "$pintmp"' EXIT
+if [ -n "$pf_pin" ]; then
+  pin="$pf_pin"
+  echo "dc: 沿用本單前置檢查憑證" >&2
+else
+  pin="$pintmp"
+  "$WV" "$f" --dump > "$pintmp" || { echo "dc: 抽不出驗收區塊（wo-verify --dump 失敗）" >&2; exit 2; }
+fi
+
+# --- do-nothing 負向對照：驗收必須在未動工前失敗 -----------------------------
+# 一個「什麼都不做也會通過」的驗收不是驗收。派工前在同一個 cwd 跑一次 pin，
+# 預期非零；若此刻就通過，代表驗收是空包彈或工單本身是 no-op，派下去只會
+# 拿到一個不知道對不對的 PASS。驗收規則本來就要求唯讀，所以提前跑是安全的。
+# 逃生門：確認既有狀態型的工單寫一行 `NEG-CONTROL: n/a`，或 DC_NEGCTL=0。
+# 有前置檢查憑證就不重跑：這張工單已經對照過一次，再跑只是白等 120s。
+negctl_ok=0
+# 11-06：工單標了 `NEG-CONTROL: n/a`（＝宣告「可能已完成」）且驗收在動工前就通過 → 結案為已完成/SKIPPED，
+# 不派模型（以前是放行後照派，白燒一隻模型；沒標的仍走下面的中止分支）。K 次全過才算，與正式驗收同標準。
+# DC_NEGCTL=0 是「強制派工」，不走這條。dcq 認 `dc: SKIPPED` 這行，結案記 SKIPPED=1。
+if [ -z "$pf_pin" ] && [ "${DC_NEGCTL:-1}" = 1 ] && grep -q '^NEG-CONTROL: *n/a' "$f"; then
+  sk=1; sk_i=1
+  while [ "$sk_i" -le "${DC_VERIFY_K:-2}" ]; do
+    ( cd "$d" && WO_VERIFY_TIMEOUT="${DC_NEGCTL_TIMEOUT:-120}" "$WV" "$f" --pinned "$pin" >/dev/null 2>&1 ) || { sk=0; break; }
+    sk_i=$((sk_i + 1))
+  done
+  if [ "$sk" = 1 ]; then
+    echo "dc: SKIPPED——驗收在動工前已通過（${DC_VERIFY_K:-2} 次）且工單標 NEG-CONTROL: n/a，視為已完成，不派模型。cwd=${d}" >&2
+    exit 10
+  fi
+fi
+if [ -z "$pf_pin" ] && [ "${DC_NEGCTL:-1}" = 1 ] && ! grep -q '^NEG-CONTROL: *n/a' "$f"; then
+  if ( cd "$d" && WO_VERIFY_TIMEOUT="${DC_NEGCTL_TIMEOUT:-120}" "$WV" "$f" --pinned "$pin" >/dev/null 2>&1 ); then
+    echo "dc: 中止——驗收在未動工前就通過（do-nothing 對照失敗）。" >&2
+    echo "    驗收是空包彈、或工單要求的狀態已經存在。確認既有狀態型的工單請加一行 NEG-CONTROL: n/a；" >&2
+    echo "    要強制派工用 DC_NEGCTL=0。cwd=${d} task=${f}" >&2
+    exit 2
+  fi
+  negctl_ok=1
+fi
+
+
+  if [ -n "$pf_pin" ]; then
+    [ ! -s "$reg_base" ] || echo "dc: 沿用 regress 基準 ${reg_base}" >&2
+    exit 0
+  fi
+  if [ -n "$REG_LINE" ] && [ ! -s "$reg_base" ]; then
+    reg_t="$(mktemp "$pf_dir/.regress.XXXXXX")" || exit 2
+    reg_run > "$reg_t"
+    if ! grep -qE '^[0-9]+ [^[:space:]]' "$reg_t"; then
+      rm -f "$reg_t"; echo "dc: regress 指令沒有輸出 <rc> <測試名> 行" >&2; exit 2
+    fi
+    # 同張工單併發時，沿用先完成的基準，不覆寫。
+    if [ -s "$reg_base" ]; then rm -f "$reg_t"
+    else mv "$reg_t" "$reg_base" || exit 2; fi
+    echo "dc: regress 基準 $(grep -cE '^[0-9]+ [^[:space:]]' "$reg_base") 筆" >&2
+  fi
+# 首次派工前 HEAD 與髒檔快照：範圍與作弊判定共用，重試不改寫。
+scope_strict="$(_scope_strict)"
+scope_w="$(_scope_writes '[]')"; [ -n "$scope_strict" ] && scope_w="$scope_strict"
+scope_head=""; scope_pre=""
+if scope_head="$(git -C "$d" rev-parse HEAD 2>/dev/null)"; then
+  scope_pre="$(git -C "$d" status --porcelain 2>/dev/null | sed 's/^...//')"
+else scope_head=""; scope_w=""; fi
+
+  printf '%s\n' "$scope_head" > "$pf_dir/scope.head" || exit 2
+  printf '%s\n' "$scope_pre" > "$pf_dir/scope.pre" || exit 2
+  printf 'lint=%s\nnegctl=%s\n' "$lint_ok" "$negctl_ok" > "$pf_dir/receipt" || exit 2
+  pftmp="$(mktemp "$pf_dir/.pin.XXXXXX")" || exit 2
+  cp "$pin" "$pftmp" && mv "$pftmp" "$pf_dir/pin" || { rm -f "$pftmp"; exit 2; }
+  exit 0
+fi
+pin="$pf_dir/pin"
+[ -f "$pin" ] || { echo 'dc: 缺少 preflight pin' >&2; exit 2; }
+scope_head="$(cat "$pf_dir/scope.head" 2>/dev/null)"
+scope_pre="$(cat "$pf_dir/scope.pre" 2>/dev/null)"
+scope_strict="$(_scope_strict)"
+scope_w="$(_scope_writes)"; [ -z "$scope_strict" ] || scope_w="$scope_strict"
+[ -n "$scope_head" ] || scope_w=""
+if [ "${DC_GATE_SCOPE:-}" != done ] && [ -n "$scope_w" ]; then
+  scope_over=""
+  set -f
+  while IFS= read -r cf; do
+    [ -n "$cf" ] || continue
+    printf '%s\n' "$scope_pre" | grep -qxF -- "$cf" && continue
+    ok=0
+    for e in $scope_w; do
+      e="${e#"$d"/}"; e="${e#./}"
+      case "$cf" in $e|"${e%/}"/*) ok=1; break ;; esac
+    done
+    [ "$ok" = 1 ] || scope_over="$scope_over $cf"
+  done <<EOF_SCOPE
+$(_scope_changed)
+EOF_SCOPE
+  set +f
+  if [ -n "$scope_over" ] && [ -n "$scope_strict" ]; then
+    echo "dc: SCOPE=over(strict)（改動超出工單 writes!：${scope_w}）：${scope_over}" >&2
+    exit 5
+  fi
+  [ -n "$scope_over" ] && echo "dc: SCOPE=over（改動超出工單 writes：${scope_w}）：${scope_over}" >&2
+fi
+
+[ "${DC_GATE_SCOPE:-}" != only ] || exit 0
+
+# 只掃本次新增的改動；跑前髒檔沿用範圍檢查的排除規則。
+if grep -qE '^ALLOW-SKIP: +[^[:space:]]' "$f"; then
+  echo 'dc: ALLOW-SKIP：依工單理由略過作弊掃描' >&2
+elif [ -n "$scope_head" ]; then
+  cheat=""
+  skip_re='pytest\.mark\.skip|unittest\.skip|t\.Skip\(|#\[ignore\]|@Disabled|(it|describe|test)\.skip\(|(^|[^[:alnum:]_])xit\(|(^|[^[:alnum:]_])xdescribe\('
+  while IFS= read -r cf; do
+    [ -n "$cf" ] || continue
+    printf '%s\n' "$scope_pre" | grep -qxF -- "$cf" && continue
+    bad=0
+    if git -C "$d" diff --no-renames --name-only --relative --diff-filter=D "$scope_head" -- "$cf" | grep -q . &&
+       printf '%s\n' "$cf" | grep -qE '(^|/)(test|tests|spec|__tests__)/|_test\.|\.test\.|_spec\.|\.spec\.'; then
+      bad=1
+    elif git -C "$d" ls-files --error-unmatch -- "$cf" >/dev/null 2>&1; then
+      git -C "$d" diff --no-ext-diff --no-textconv --unified=0 "$scope_head" -- "$cf" | sed -n '/^+++ /d; s/^+//p' | grep -qE "$skip_re" && bad=1
+    elif [ -f "$d/$cf" ]; then
+      grep -qE "$skip_re" "$d/$cf" && bad=1
+    fi
+    [ "$bad" = 0 ] || cheat="$cheat $cf"
+  done <<EOF_CHEAT
+$(_scope_changed)
+EOF_CHEAT
+  if [ -n "$cheat" ]; then
+    echo "dc: CHEAT：${cheat# }（新增 skip 標記或刪除測試檔）" >&2
+    exit 6
+  fi
+fi
+# 模型回報工單瑕疵（issue #4）：不跑驗收，直接 exit 2 走既有的契約錯分支 ——
+# dcq 的 exit:2 是 FATAL、不重試、不罰模型，工單的錯不會算到模型頭上。
+# 錨行首：模型引用工單原文或印出程式碼時不能誤判。
+# 排除「DC_TASK_DEFECT: N/A／none／無」：模型照格式回報「沒有瑕疵」不算（2026-10-18 or-free 完成後印 N/A 被判 rc=2）。
+if grep '^DC_TASK_DEFECT:' "${DC_GATE_OUTPUT:-/dev/null}" | grep -qviE '^DC_TASK_DEFECT:[[:space:]]*(N/?A|none|無)([^[:alnum:]]|$)'; then
+  echo "dc: 模型回報工單瑕疵（DC_TASK_DEFECT），不跑驗收" >&2
+  exit 2
+fi
+
+# 完成定義在這裡，不在模型的自述。務必在 $d 底下跑 —— 驗收斷言用的是相對路徑，
+# 在呼叫端的 cwd 跑會全部找不到檔案而誤判 FAIL。
+# 跑 pin 那份而不是工單當下那份（篡改即 exit 3），並重跑 K 次全過才算 PASS：
+# 單次通過只告訴你「至少成功過一次」，重跑才抓得到時好時壞的驗收與副作用。
+K="$verify_k"
+echo "dc: 驗收 → ${WV} --pinned (cwd=$d, K=$K)" >&2
+i=1
+while [ "$i" -le "$K" ]; do
+  [ "$K" -gt 1 ] && echo "dc: 驗收第 ${i}/${K} 次" >&2
+  ( cd "$d" && "$WV" "$f" --pinned "$pin" ) || {
+    vrc=$?
+    [ "$vrc" = 3 ] && echo "dc: 驗收區塊被改動（exit 3）—— 這是紅旗，不是工單瑕疵，請主 session 看 diff" >&2
+    [ "$i" -gt 1 ] && echo "dc: 驗收第 ${i} 次才失敗 —— 驗收或改動不穩定（flaky），不要只憑第一次通過結案" >&2
+    exit "$vrc"
+  }
+  i=$((i + 1))
+done
+# 回歸比對（#21）：基準綠、完工紅或這個測試名不再出現 → 回歸。基準本來就紅、基準沒有的新測試都不算。
+# exit 4 讓 dcq 落 `*`（驗收未過、換下一隻、不罰模型）。
+if [ -n "${REG_LINE:-}" ] && [ -s "$reg_base" ]; then
+  reg_now="$(reg_run)"
+  # 按名比對：基準 $1==0、完工非 0 或完工沒有這個名 → 回歸
+  reg_bad="$(printf '%s\n' "$reg_now" | awk '
+    NR == FNR { b[$2] = $1; next }
+    NF >= 2 { n[$2] = $1 }
+    END { for (t in b) if (b[t] == 0 && (!(t in n) || n[t] != 0)) print t }' "$reg_base" - | sort)"
+  reg_bad="$(printf '%s' "$reg_bad" | xargs)"
+  if [ -n "$reg_bad" ]; then
+    echo "dc: REGRESSION：${reg_bad}" >&2
+    exit 4
+  fi
+fi
+exit 0
+}

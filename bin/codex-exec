@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# codex-exec <message> -f <task.md> -m codex/<model> [opencode run 的其他旗標…]
+# dc 的 Codex 執行人：沿用 CLI 登入與 sandbox，default 使用設定檔模型。
+# JSONL 轉逐行文字供 dcq watchdog；錯誤事件即使上游 rc=0 也判失敗。
+set -u
+msg="" f="" m=""
+[ $# -gt 0 ] && case "$1" in -*) ;; *) msg="$1"; shift ;; esac
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f|--file|-m|--model|--title|--dir|--log-level|--agent)
+      [ $# -ge 2 ] || { echo "codex-exec: $1 需要值" >&2; exit 2; }
+      case "$1" in -f|--file) f="$2" ;; -m|--model) m="$2" ;; esac
+      shift 2 ;;
+    --model=*) m="${1#--model=}"; shift ;;
+    *) shift ;; # opencode 專屬旗標忽略
+  esac
+done
+case "$m" in codex/?*) m="${m#codex/}" ;; *) echo "codex-exec: 只接 codex/<model>：${m:-（沒給 -m）}" >&2; exit 2 ;; esac
+[ -r "$f" ] || { echo "codex-exec: 任務檔讀不到：${f:-（沒給 -f）}" >&2; exit 2; }
+command -v "${CODEX_BIN:-codex}" >/dev/null || { echo "codex-exec: 找不到 ${CODEX_BIN:-codex}" >&2; exit 2; }
+rules="$(dirname "$(dirname "$(readlink -f "$0")")")/executor-rules.md"
+prompt="$msg
+
+任務檔：${f}（先完整讀完再動手）"
+# codex-cli 0.163.0 exec --help 無 append-system-prompt 等價旗標，規則前置到 prompt。
+[ ! -r "$rules" ] || prompt="$(cat "$rules")
+
+$prompt"
+ma=(); [ "$m" = default ] || ma=(-m "$m")
+# dc 的 START_RE 認這行判「已開工」。
+echo "> build · codex/$m"
+tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+# codex 的 workspace-write 把 .git 設唯讀（commit 報 index.lock Operation not permitted）、也擋巢狀 sandbox-exec
+# （2026-11-08 WO-B／WO-C 實測）。預設 danger-full-access，憑證與對話紀錄改由 dc 外層 sandbox-exec 擋（同 opencode）。
+# ponytail: 未打真實模型取樣；欄位依 https://developers.openai.com/codex/noninteractive
+# 的 item.started command_execution／item.completed agent_message；未知事件略過。
+"${CODEX_BIN:-codex}" exec --json --skip-git-repo-check -C "$PWD" \
+  --sandbox "${CODEX_EXEC_SANDBOX:-danger-full-access}" ${ma[@]+"${ma[@]}"} "$prompt" </dev/null 2>&1 \
+| jq --unbuffered -rR 'fromjson? // ("codex: " + .) |
+    if type == "string" then .
+    elif .type == "item.completed" and .item.type == "agent_message" then .item.text
+    elif .type == "item.started" and .item.type == "command_execution" then "→ \(.item.command[0:200])"
+    elif .type == "turn.failed" or .type == "error" then
+      "Error: codex-exec: \(.error.message // .message // "unknown error")"
+    else empty end' | tee "$tmp"
+rc=${PIPESTATUS[0]}
+grep -q '^Error: codex-exec: ' "$tmp" && [ "$rc" = 0 ] && rc=1
+exit "$rc"

@@ -30,6 +30,11 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 
 「派o <名稱>」→ plan 與 add 都多帶 `DCQ_PREFER=<名稱>`（子字串、不分大小寫，只影響免費層排序）。`DCQ_ORDER`／`DCQ_PREFER` 在 `dcq add` 時寫進 job 檔，事後改要重新 add。
 
+## 派 Codex
+
+`DC_MODEL=codex/default dc <task> <cwd>`（判定鏈同 O）。`codex/<model>` 指定模型；`default` 沿用 Codex 設定。需先完成 Codex CLI 登入，扣 ChatGPT 訂閱額度。
+佇列可用 `DCQ_MODELS=codex/default dcq add <task> <cwd> mid`；不新增 Codex fallback 層。
+
 ## Cheat sheet
 
 ```text
@@ -66,6 +71,7 @@ Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|m
 4. **冪等**：斷言寫「已存在就過」，重派不破壞前一輪。
 5. **context 放檔案**：給絕對路徑讓模型自己讀，不把檔案內容貼進工單。
 6. **指定模型用單一 dc_id**（`DC_FREE_MODEL`），不用 `omniroute/auto` 類路由名。
+7. **改程式的工單預設帶 `regress:`**：cwd 有測試套件就加一行 `regress: <全套測試指令>`，每行輸出 `<rc> <測試名>`（例：`regress: for t in test/*_test.sh; do bash "$t" >/dev/null 2>&1; echo "$? $(basename "$t")"; done`）。派工前拍基準，完工後基準綠→紅或消失判回歸；基準本來紅、新增測試不算。範圍要硬擋就用 `writes!:`（`writes:` 只標記）。
 
 不滿足就拆成多張單步工單，不是退回主 session。
 
@@ -76,6 +82,9 @@ Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|m
 | 0 | 驗收連過 `DC_VERIFY_K`（預設 2）次 | 結案 |
 | 2（派工前） | 工單契約錯，或負向對照失敗（驗收未動工就過） | 改成真斷言或加 `NEG-CONTROL: n/a` |
 | 3 | 驗收區塊與派工前 pin 不一致＝執行人改了評分器 | 看 diff 查他有沒有真做事，不要改 pin 重跑 |
+| 4 | `regress:` 判回歸：基準綠的測試完工後紅或消失（`dc: REGRESSION：<測試名>`） | dcq 已換下一隻；自己派就看是工單漏寫範圍還是執行人改壞 |
+| 5 | `writes!:` 越界（`dc: SCOPE=over(strict)`），不跑驗收 | 看越界檔是否本來就該改：該改就放寬 `writes!:`，不該就重派 |
+| 6 | 新增 skip 標記或刪除追蹤測試（`dc: CHEAT`） | 查改動；合法停用於工單行首寫 `ALLOW-SKIP: <理由>`。dcq 換下一隻、不罰模型 |
 | 75 | 同 cwd 已有 dc／dcq 在跑 | 換目錄或 `DC_LOCK_WAIT=<秒>`，不是上游壞 |
 | 其它 | 驗收首個失敗指令的 rc | 看 `wo-verify FAIL line N` 那行，重派或自己修 |
 

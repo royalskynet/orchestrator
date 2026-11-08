@@ -4,7 +4,7 @@
 #
 # 工單可選行首 `regress: <指令>`：派工前後各跑一次，基準綠、完工紅或消失 → REGRESSION（exit 4）。
 # 工單可選行首 `writes!: <路徑…>`：改動超出即判失敗、不跑驗收（exit 5）；`writes:` 只標記不判。
-# exit code：0 PASS／1 執行或驗收失敗／2 工單契約錯或 FATAL／3 驗收區塊被改／4 REGRESSION／5 SCOPE strict／75 cwd 被鎖。
+# exit code：0 PASS／1 執行或驗收失敗／2 工單契約錯或 FATAL／3 驗收區塊被改／4 REGRESSION／5 SCOPE strict／6 CHEAT／75 cwd 被鎖。
 #
 # 就是 opencode run 的薄封裝。不另建工具鏈，不做 deep-run 那套：
 # 不需要 tmux detach、不需要 sandbox proxy 偵測、不需要獨立 CLAUDE_CONFIG_DIR ——
@@ -69,6 +69,8 @@ tier() {
     opencode/*|opencode-go/*) if is_free "${1#*/}"; then echo free; elif [ "${1%%/*}" = opencode-go ]; then echo sub; else echo metered; fi ;;
     # Claude 訂閱（claude.ai 方案額度，bin/claude-exec 走 OAuth，不碰 API key）
     claude/*) echo sub ;;
+    # ChatGPT 訂閱額度；codex-exec 沿用 Codex CLI 登入設定。
+    codex/*) echo sub ;;
     */*) echo metered ;;
     *) if is_free "$1"; then echo free; else echo metered; fi ;;
   esac
@@ -96,99 +98,20 @@ if [ -f "$OCJ" ] && command -v jq >/dev/null && jq -e '.provider.opencode.option
   echo "dc: 中止——${OCJ} 有 provider.opencode.options.baseURL 覆寫，會 405（fixindex 9775），刪掉該 provider 區塊" >&2; exit 2
 fi
 
-# wo-verify／deep-lint 用 repo 自帶的那份（bin/ 同目錄），不走 PATH：PATH 上的 wo-verify
-# 是 deepclaude 的 symlink，dc 與 deepclaude 互不依賴。DC_BIN 只給測試注入假閘用。
-OCBIN="${DC_BIN:-$(dirname "$(readlink -f "$0")")}"
-WV="$OCBIN/wo-verify"; DL="$OCBIN/deep-lint"
-[ -x "$WV" ] || { echo "dc: 找不到 wo-verify：${WV}" >&2; exit 2; }
-
-# --- 前置檢查憑證（DC_PREFLIGHT_DIR）-------------------------------------------
-# 2026-10-21：dc 每派一次工就重跑整套前置檢查（deep-lint ＋ do-nothing 負向對照，
-# 對照上限 120s），評分器也是「當下」從工單重抽的 —— 前一隻模型若改過工單的驗收區塊，
-# 下一次重抽會把改過的版本釘成新基準（自己改自己過）。也不能用「第幾次嘗試」判斷有沒有驗過：
-# lint 失敗是 exit 1（會被重試），watchdog 也可能在對照跑完前就殺掉 dc。
-# 憑證＝第一次前置檢查全過時留下的評分器快照：同一張工單的後續嘗試沿用同一份評分器，
-# 不重跑 lint 與負向對照；工單當下的驗收區塊照舊跟它比對，不一致照樣 exit 3。
-# 沒設這個變數時行為完全不變（下面每一段都留著舊路徑）。
+# gate 固定找 repo 同目錄；DC_BIN 仍注入測試用 wo-verify／deep-lint。
+OCBIN="$(dirname "$(readlink -f "$0")")"
 pf_dir="${DC_PREFLIGHT_DIR:-}"
-pf_pin=""
-[ -n "$pf_dir" ] && [ -f "$pf_dir/pin" ] && pf_pin="$pf_dir/pin"
-
-# 沒有可跑的驗收區塊就不派工：模型做完也無法判定成敗，等於燒時間換一個不知道對不對的結果。
-# 有憑證就不重跑 lint：第一次已經過了，再跑一次只是讓換模型的嘗試白等。
-lint_ok=0
-if [ -z "$pf_pin" ] && [ "${DC_SKIP_LINT:-0}" != 1 ] && [ -x "$DL" ]; then
-  "$DL" "$f" || { echo "dc: deep-lint 未過（DC_SKIP_LINT=1 可強制派工）" >&2; exit 1; }
-  lint_ok=1
+pf_owned=0
+if [ -z "$pf_dir" ]; then
+  pf_dir="$(mktemp -d "${TMPDIR:-/tmp}/dc-preflight.XXXXXX")" || exit 2
+  pf_owned=1
 fi
-"$WV" "$f" --dry >/dev/null 2>&1 || { echo "dc: 驗收區塊語法錯，wo-verify --dry 失敗" >&2; exit 2; }
-
-# --- 評分器釘住（pin）：派工前先把驗收腳本抽出來存一份 ------------------------
-# 工單檔在執行人手上，驗收區塊也在裡面：他改得到的評分器，他早晚會改到過關
-# （fixindex 0372 §4 偽造 git status、0373 在 fixsnap 植入刪檔後門 + 偽造註解）。
-# executor-rules.md 第 8 條「不修改驗收區塊」是提示詞，本機實測 Documentation 層
-# 符合率 ≈ 0%。這裡改成機械偵測：驗收跑 pin 這份，並比對工單當下的版本，不一致 exit 3。
-# pintmp＝這次自己抽的暫存檔（EXIT 時刪）；pin＝要餵給 wo-verify --pinned 的那份。
-# 有前置檢查憑證就沿用憑證（不重新 --dump：重抽等於把前一隻模型改過的驗收區塊
-# 釘成新基準）；憑證本身不能被 EXIT trap 刪掉，所以刪的對象是 pintmp 不是 pin。
-pintmp="$(mktemp)" || { echo "dc: mktemp 失敗（pin）" >&2; exit 2; }
-trap 'rm -f "$pintmp"' EXIT
-if [ -n "$pf_pin" ]; then
-  pin="$pf_pin"
-  echo "dc: 沿用本單前置檢查憑證" >&2
-else
-  pin="$pintmp"
-  "$WV" "$f" --dump > "$pintmp" || { echo "dc: 抽不出驗收區塊（wo-verify --dump 失敗）" >&2; exit 2; }
-fi
-
-# --- do-nothing 負向對照：驗收必須在未動工前失敗 -----------------------------
-# 一個「什麼都不做也會通過」的驗收不是驗收。派工前在同一個 cwd 跑一次 pin，
-# 預期非零；若此刻就通過，代表驗收是空包彈或工單本身是 no-op，派下去只會
-# 拿到一個不知道對不對的 PASS。驗收規則本來就要求唯讀，所以提前跑是安全的。
-# 逃生門：確認既有狀態型的工單寫一行 `NEG-CONTROL: n/a`，或 DC_NEGCTL=0。
-# 有前置檢查憑證就不重跑：這張工單已經對照過一次，再跑只是白等 120s。
-negctl_ok=0
-# 11-06：工單標了 `NEG-CONTROL: n/a`（＝宣告「可能已完成」）且驗收在動工前就通過 → 結案為已完成/SKIPPED，
-# 不派模型（以前是放行後照派，白燒一隻模型；沒標的仍走下面的中止分支）。K 次全過才算，與正式驗收同標準。
-# DC_NEGCTL=0 是「強制派工」，不走這條。dcq 認 `dc: SKIPPED` 這行，結案記 SKIPPED=1。
-if [ -z "$pf_pin" ] && [ "${DC_NEGCTL:-1}" = 1 ] && grep -q '^NEG-CONTROL: *n/a' "$f"; then
-  sk=1; sk_i=1
-  while [ "$sk_i" -le "${DC_VERIFY_K:-2}" ]; do
-    ( cd "$d" && WO_VERIFY_TIMEOUT="${DC_NEGCTL_TIMEOUT:-120}" "$WV" "$f" --pinned "$pin" >/dev/null 2>&1 ) || { sk=0; break; }
-    sk_i=$((sk_i + 1))
-  done
-  if [ "$sk" = 1 ]; then
-    echo "dc: SKIPPED——驗收在動工前已通過（${DC_VERIFY_K:-2} 次）且工單標 NEG-CONTROL: n/a，視為已完成，不派模型。cwd=${d}" >&2
-    exit 0
-  fi
-fi
-if [ -z "$pf_pin" ] && [ "${DC_NEGCTL:-1}" = 1 ] && ! grep -q '^NEG-CONTROL: *n/a' "$f"; then
-  if ( cd "$d" && WO_VERIFY_TIMEOUT="${DC_NEGCTL_TIMEOUT:-120}" "$WV" "$f" --pinned "$pin" >/dev/null 2>&1 ); then
-    echo "dc: 中止——驗收在未動工前就通過（do-nothing 對照失敗）。" >&2
-    echo "    驗收是空包彈、或工單要求的狀態已經存在。確認既有狀態型的工單請加一行 NEG-CONTROL: n/a；" >&2
-    echo "    要強制派工用 DC_NEGCTL=0。cwd=${d} task=${f}" >&2
-    exit 2
-  fi
-  negctl_ok=1
-fi
-
-# --- 前置檢查憑證：閘都過了才留 ------------------------------------------------
-# lint 或負向對照沒過、或中途被殺（watchdog 可能在對照跑完前就殺掉 dc），
-# 都不能留下 pin：留下來下一次就會拿「沒驗過」的評分器當基準。
-# 用 DC_SKIP_LINT／DC_NEGCTL／NEG-CONTROL: n/a 關掉某一關時不算「通過」，
-# 那就不留憑證（維持舊行為：每次都重跑閘）。
-if [ -n "$pf_dir" ] && [ -z "$pf_pin" ] && [ "$lint_ok" = 1 ] && [ "$negctl_ok" = 1 ]; then
-  pftmp=""
-  if mkdir -p "$pf_dir" 2>/dev/null; then
-    pftmp="$(mktemp "$pf_dir/.pin.XXXXXX" 2>/dev/null || true)"
-    if [ -n "$pftmp" ] && cp "$pintmp" "$pftmp" 2>/dev/null && mv "$pftmp" "$pf_dir/pin" 2>/dev/null; then
-      pftmp=""
-    fi
-  fi
-  [ -z "$pftmp" ] || rm -f "$pftmp"
-  [ -f "$pf_dir/pin" ] || echo "dc: 寫不了前置檢查憑證（不影響派工）：${pf_dir}" >&2
-fi
-
+cleanup_pf() { [ "$pf_owned" = 0 ] || rm -rf "$pf_dir"; }
+trap 'cleanup_pf' EXIT
+"$OCBIN/gate" preflight "$f" "$d" "$pf_dir"
+pfrc=$?
+[ "$pfrc" != 10 ] || exit 0
+[ "$pfrc" = 0 ] || exit "$pfrc"
 
 # 未指定模型就釘死預設免費模型（不讓 opencode config 的 per-agent 付費 model 生效）；
 # 有指定則沿用（已驗證是免費）。
@@ -205,7 +128,7 @@ for a in "$@"; do
   esac
 done
 if [ "$have_m" != 1 ]; then
-  m="${DC_FREE_MODEL:-$DEFAULT_FREE}"
+  m="${DC_MODEL:-${DC_FREE_MODEL:-$DEFAULT_FREE}}"
   case "$m" in */*) ;; *) m="opencode/$m" ;; esac
   set -- -m "$m" "$@"
 fi
@@ -310,8 +233,8 @@ fi ;; esac
 # 上游停滯時 opencode 預設乾等 chunkTimeout（官方 300000ms）。沒設或設太長＝一次停滯
 # 燒 5 分鐘還看不出是卡死還是在想，故派工前先唸一次合併後的 config 並出聲。
 # 只 WARN 不擋：這是使用者的 config，dc 無權改。
-# claude/* 不經 opencode（bin/claude-exec），沒有 chunkTimeout 可設
-case "$m" in claude/*) DC_NO_TIMEOUT_WARN=1 ;; esac
+# claude/*／codex/* 不經 opencode，沒有 chunkTimeout 可設
+case "$m" in claude/*|codex/*) DC_NO_TIMEOUT_WARN=1 ;; esac
 if [ "${DC_NO_TIMEOUT_WARN:-0}" != 1 ] && command -v jq >/dev/null; then
   case "$m" in */*) prov="${m%%/*}" ;; *) prov="opencode" ;; esac
   ct="$(opencode debug config 2>/dev/null | jq -r --arg p "$prov" '.provider[$p].options.chunkTimeout // empty' 2>/dev/null)"
@@ -355,7 +278,7 @@ if [ "${DC_LOCK_HELD:-0}" != 1 ]; then
     fi
     sleep 1; waited=$((waited + 1))
   done
-  trap 'release_lock; rm -f "$pintmp"' EXIT
+  trap 'release_lock; cleanup_pf' EXIT
 fi
 # INT/TERM 只負責退出，清理交給 EXIT trap。handler 裡不 exit 的話 bash 跑完清理會「繼續往下」，
 # 拿半成品去跑 wo-verify：被殺的工單可能被判 PASS 或算成模型做錯（2026-10-03 實證）。
@@ -413,74 +336,13 @@ _wt_benign_advance() {
 }
 wt_before="$(_wt_snap)"
 
-# --- 範圍斷言（I3，10-23）：工單可選的 `writes: 路徑1, 路徑2`（行首；路徑相對 cwd 或絕對、目錄用 dir/、可用 glob）---
-# 跑完後 git 看得到的改動檔（相對 ${d}）⊆ writes，否則在 log 印 `SCOPE=over`、dcq 把 SCOPE=over 記進 job 檔。
-# 只標記不判 FAIL（使用者定）：驗收照跑、exit code 不變。沒寫 writes 的工單不檢查。
-# `writes!:` 嚴格版（#21）：同樣語法，越界印 SCOPE=over(strict)、不跑驗收、exit 5；兩行都寫以 writes! 為準。
-# ponytail: 只看 git 追蹤得到／未被 ignore 的檔、跑前就髒的檔不算；路徑含空白會誤判。
-_scope_line() {  # $1=行標籤正規式。後面接 `[[:space:]]*[:：]`：`writes:` 不會吃到 `writes!:`，反之亦然
-  # 先只吃 ASCII 冒號：sed 的範圍式（[Ss]）碰上多一位元組字元（全形冒號）會報 illegal byte sequence；
-  # 吃到就完事，吃不到才換全形冒號（用 awk，正規式由變數傳，不給 sed 看全形字元）。
-  local l
-  l="$(sed -n -E "s/^$1[[:space:]]*:[[:space:]]*//p" "$f" | head -1)"
-  [ -z "$l" ] && l="$(awk -v re="^$1[ \t]*$(_FW)[ \t]*" '{ s = $0; if (sub(re, "", s)) { print s; exit } }' "$f")"
-  printf '%s\n' "$l" | sed 's/,/ /g; s/，/ /g'; }
-_FW() { printf '\357\274\232'; }
-_scope_writes() { _scope_line '[Ww][Rr][Ii][Tt][Ee][Ss]'; }          # 只認 writes:（writes! 後面是 !，不符 [space:：]）
-_scope_strict() { _scope_line '[Ww][Rr][Ii][Tt][Ee][Ss]!'; }
-# regress: <指令>（#21）：基準檔案跨模型重試共用，必須是第一次派工前 cwd 的狀態。
-REG_LINE="$(_scope_line '[Rr][Ee][Gg][Rr][Ee][Ss][Ss]')"
-REG_TIMEOUT="${DC_REGRESS_TIMEOUT:-600}"
-# 只留 `<rc> <測試名>` 行；逾時用既有的 timeout（沒有就不限時，DC_REGRESS_TIMEOUT 不生效）
-if command -v timeout >/dev/null 2>&1; then
-  reg_run() { ( cd "$d" && exec timeout "$REG_TIMEOUT" bash -c "$REG_LINE" ) 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+ [^[:space:]]' || true; }
-else
-  reg_run() { ( cd "$d" && exec bash -c "$REG_LINE" ) 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+ [^[:space:]]' || true; }
-fi
-# 基準存哪：有 DC_PREFLIGHT_DIR 就存 $pf_dir/regress.base——同一張工單換模型重試時 cwd 已被前一隻模型改過，
-# 基準必須是第一次派工前的；沒設就存暫存目錄（EXIT trap 一起刪）。
-# 多隻模型併發建基準（工單無 preflight 目錄時 id 相同）：先寫暫存再 link/mv，先到的那份留著。
-reg_base=""
-if [ -n "$pf_dir" ] && mkdir -p "$pf_dir" 2>/dev/null; then reg_base="$pf_dir/regress.base"
-elif [ -n "$REG_LINE" ]; then
-  reg_dir="$(mktemp -d "${TMPDIR:-/tmp}/dc-regress.XXXXXX")" || exit 2
-  reg_base="$reg_dir/base"
-  trap 'rm -rf "$reg_dir" "$pintmp"' EXIT
-fi
-# 基準在 do-nothing 對照之後、送 opencode 之前拍（別人未提交的改動讓既有測試紅，是既有狀態不是模型的帳）；
-# 基準拍不出可解析的行＝工單契約錯（exit 2）。既有基準直接沿用，不重跑。
-# 有 preflight 目錄時要在同目錄寫完再換名（同一張工單並行時第一份算）；先比大小：沿用那份不能被改寫。
-reg_t=""
-if [ -n "$REG_LINE" ] && [ -z "$pf_dir" ]; then reg_t="$reg_dir/.base.$$"
-elif [ -n "$REG_LINE" ]; then reg_t="$pf_dir/.regress.base.$$"; fi
-if [ -n "$REG_LINE" ] && [ -s "$reg_base" ]; then
-  echo "dc: 沿用 regress 基準 ${reg_base}" >&2
-elif [ -n "$REG_LINE" ]; then
-  reg_run > "$reg_t"
-  [ -s "$reg_base" ] || mv -f "$reg_t" "$reg_base" 2>/dev/null || cp "$reg_t" "$reg_base"
-  rm -f "$reg_t"
-  if ! grep -qE '^[0-9]+ [^[:space:]]' "$reg_base"; then
-    rm -f "$reg_base"; echo "dc: regress 指令沒有輸出 <rc> <測試名> 行" >&2; exit 2
-  fi
-  echo "dc: regress 基準 $(grep -cE '^[0-9]+ [^[:space:]]' "$reg_base") 筆" >&2
-fi
-_scope_changed() {
-  { git -C "$d" diff --name-only --relative "$scope_head" -- 2>/dev/null; git -C "$d" ls-files -o --exclude-standard 2>/dev/null; } | sort -u
-}
-# writes!: 嚴格版（#21）——越界不跑驗收、exit 5。兩行都寫以 writes! 為準。
-scope_strict="$(_scope_strict)"
-scope_w="$(_scope_writes '[]')"; [ -n "$scope_strict" ] && scope_w="$scope_strict"
-scope_head=""; scope_pre=""
-if [ -n "$scope_w" ] && scope_head="$(git -C "$d" rev-parse HEAD 2>/dev/null)"; then
-  scope_pre="$(git -C "$d" status --porcelain 2>/dev/null | sed 's/^...//')"
-else scope_w=""; fi
-
 # 偵測字串首字母加 []：模型 cat 本檔時，這幾行原始碼不可比中自己（10-21 改 dc 的工單誤判濫用）。
 RL_RE='small=false.*[R]ate limit exceeded'
 # 額度用完另成一類（dcq 據此冷卻到重置、不記模型的帳）。opencode 對 Zen／Go 額度是直接 rc=1 結束，
 # 印 Error 前綴接 [F]ree usage limit reached…／[G]o usage limit exceeded（M2 實例各 198／151 筆；
 # 首字母加 [] 才不會被模型 cat 本檔時自比中）；Google 是 level=ERROR log。
 # Claude 訂閱（claude-exec 把 result 錯誤印成 `Error: claude-exec: …`）：[C]laude AI usage limit reached／[Y]ou've hit your … limit。
+# Codex 額度訊息 You've hit your ... limit 由既有分支涵蓋；test/dc_codex_test.sh 驗證。
 QUOTA_RE='(level=ERROR.*small=false|Error: ).*([F]ree usage limit reached|[F]reeUsageLimitError|[G]o usage limit exceeded|[Y]ou exceeded your current quota|[Q]uota exceeded for metric|RESOURCE_[E]XHAUSTED|[C]laude AI usage limit reached|[Y]ou.ve hit your [a-z ]*limit)'
 # 上游不可用（Model/Endpoint is unavailable、已下架）opencode 一樣在程序內重試約 67s 才 rc=1（2026-10-11 實測），提早結束讓 dcq 換模型。
 # opencode 型錄沒有這隻（清冊從 Zen /models 自動加、models.dev 還沒收，10-25 jev-1.13-free 兩台 37 筆）：
@@ -495,7 +357,7 @@ pidf="$out.pid"; rcf="$out.rc"
 # --title：沒給標題時 opencode 會另叫 small model（nemotron-3-ultra-free）產標題，每張工單白吃一份免費額度
 # 連子程序一起殺：子程序（MCP／LSP 等）還握著 stdout 的話，tee 不會結束，wait 會卡住。
 kill_oc() { local p; p=$(cat "$pidf" 2>/dev/null) || return 0; pkill -TERM -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; return 0; }
-trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf" "$pintmp"' EXIT
+trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf"; cleanup_pf' EXIT
 # opencode v2（2026-10）拿掉 --pure／--dir、log-level 改小寫（公開 repo 692489e）；1.18.x 照舊。
 # 看 run --help 有沒有 --pure 決定（0.2s），工作目錄一律再 cd 一次，兩版都對。
 # DC_OC_V2=0／1 可跳過偵測（測試的假 opencode 不認 --help）
@@ -504,16 +366,16 @@ case "${DC_OC_V2:-}" in 0) oc_v2=0 ;; 1) oc_v2=1 ;; *) if opencode run --help 2>
 # 每張都 60s 判不開工，--standalone 同單 10s 過），--print-logs 也只有 --standalone 才帶服務端 ERROR log（額度／限流偵測靠它）。
 # OPENCODE_CONFIG_CONTENT 在 v2.1.2 --standalone 仍生效（10-25 M2 實測 instructions 有讀到）。
 if [ "$oc_v2" = 0 ]; then ocflags=(--pure --log-level ERROR --dir "$d"); else ocflags=(--standalone --log-level error); fi
-# claude/* 改叫同目錄的 claude-exec（吃同一組參數，opencode 專屬旗標忽略）
-case "$m" in claude/*) ocrun=("$(dirname "$(readlink -f "$0")")/claude-exec") ;; *) ocrun=(opencode run) ;; esac   # oc-stdin-ok：實際執行在下方 exec 區塊（"$@" </dev/null）
+# claude/*／codex/* 改叫同目錄的執行外殼（同組參數，opencode 專屬旗標忽略）
+case "$m" in claude/*) ocrun=("$(dirname "$(readlink -f "$0")")/claude-exec") ;; codex/*) ocrun=("$(dirname "$(readlink -f "$0")")/codex-exec") ;; *) ocrun=(opencode run) ;; esac   # oc-stdin-ok：實際執行在下方 exec 區塊（"$@" </dev/null）
 # 鐵則（2026-10-26 使用者定）：opencode free 層（Zen 無斜線／opencode/*、opencode-go/*-free）只准經 opencode CLI 呼叫，
 # 禁止 API 直打（Zen 免費閘認 opencode 客戶端，直打會被判濫用鎖 IP）。以後誰改執行器都要先過這道閘；test/oc_cli_only_test.sh 守。
 case "$m" in */*) case "$m" in opencode/*|opencode-go/*-free) ocfree=1 ;; *) ocfree=0 ;; esac ;; *) ocfree=1 ;; esac
 [ "$ocfree" = 1 ] && [ "${ocrun[*]}" != "opencode run" ] && { echo "dc: 中止——opencode free 模型只准經 opencode CLI 呼叫（${m}），禁止 API" >&2; exit 2; }
 # 第三方模型的執行人禁讀對話紀錄與憑證（fixindex 11507：換 HOME／opencode permission 都擋不住 shell 絕對路徑）。
-# claude-exec 要寫自己的 transcript，不套；.local/share/opencode 是 --standalone 必讀，不擋。DC_SANDBOX=0 關。
-sbx=()
-if [ "${ocrun[*]}" = "opencode run" ] && [ "${DC_SANDBOX:-1}" != 0 ] && command -v sandbox-exec >/dev/null; then
+# claude-exec 要寫自己的 transcript，不套；codex-exec 套（codex 自身沙箱關掉，見 bin/codex-exec）；.local/share/opencode 是 --standalone 必讀，不擋。DC_SANDBOX=0 關。
+sbx=(); case "$m" in codex/*) sbx_codex=1 ;; *) sbx_codex=0 ;; esac
+if { [ "${ocrun[*]}" = "opencode run" ] || [ "$sbx_codex" = 1 ]; } && [ "${DC_SANDBOX:-1}" != 0 ] && command -v sandbox-exec >/dev/null; then
   _r="$(cd "$HOME" && pwd -P)"
   # opencode.json 的 {file:~/.creds/kv/X.txt} 是 opencode 自己啟動要讀的 provider key，逐檔放行（只限 kv/ 下、只讀）；
   # 全擋會讓每隻模型都報「Configuration is invalid … bad file reference」（2026-10-28 全池失敗）。
@@ -584,28 +446,8 @@ if [ -n "$drift" ]; then
   echo "dc: 判 FATAL，不跑驗收；請主 session 檢查並還原上列 worktree" >&2
   exit 2
 fi
-if [ -n "$scope_w" ]; then
-  scope_over=""
-  set -f
-  while IFS= read -r cf; do
-    [ -n "$cf" ] || continue
-    printf '%s\n' "$scope_pre" | grep -qxF -- "$cf" && continue
-    ok=0
-    for e in $scope_w; do
-      e="${e#"$d"/}"; e="${e#./}"
-      case "$cf" in $e|"${e%/}"/*) ok=1; break ;; esac
-    done
-    [ "$ok" = 1 ] || scope_over="$scope_over $cf"
-  done <<EOF_SCOPE
-$(_scope_changed)
-EOF_SCOPE
-  set +f
-  if [ -n "$scope_over" ] && [ -n "$scope_strict" ]; then
-    echo "dc: SCOPE=over(strict)（改動超出工單 writes!：${scope_w}）：${scope_over}" >&2
-    exit 5
-  fi
-  [ -n "$scope_over" ] && echo "dc: SCOPE=over（改動超出工單 writes：${scope_w}）：${scope_over}" >&2
-fi
+# 保留原有優先序：worktree drift → scope → 上游錯誤 → 完工驗收。
+DC_GATE_SCOPE=only "$OCBIN/gate" judge "$f" "$d" "$pf_dir" || exit $?
 [ "$rl" = 5 ] && { echo "dc: 上游額度用完（$(grep -m1 -oE "$QUOTA_RE" "$out" | grep -oE '(Free usage limit reached|FreeUsageLimitError|Go usage limit exceeded|You exceeded your current quota|Quota exceeded for metric[^"]*|RESOURCE_EXHAUSTED|Claude AI usage limit reached|You.ve hit your [a-z ]*limit)' | head -1 | cut -c1-160)），已提早結束" >&2; grep -qE 'PerMinute|per minute' "$out" && echo "dc: 額度窗口＝每分鐘" >&2; exit 1; }
 [ "$rl" = 1 ] && { echo "dc: 上游限流（429），opencode 會照 retry-after 久等重試，已提早結束" >&2; exit 1; }
 [ "$rl" = 2 ] && { echo "dc: 上游不可用（$(grep -m1 -oE '(Upstream request failed[^"]*|Model [^ ]+ has been deprecated|[M]odel unavailable: [^ ]+|[P]roviderModelNotFoundError: [^.]+)' "$out")），已提早結束" >&2; exit 1; }
@@ -621,46 +463,6 @@ case "$m" in opencode/*)
     "$ZG" ok >/dev/null 2>&1
   fi ;;
 esac
-# 模型回報工單瑕疵（issue #4）：不跑驗收，直接 exit 2 走既有的契約錯分支 ——
-# dcq 的 exit:2 是 FATAL、不重試、不罰模型，工單的錯不會算到模型頭上。
-# 錨行首：模型引用工單原文或印出程式碼時不能誤判。
-# 排除「DC_TASK_DEFECT: N/A／none／無」：模型照格式回報「沒有瑕疵」不算（2026-10-18 or-free 完成後印 N/A 被判 rc=2）。
-if grep '^DC_TASK_DEFECT:' "$out" | grep -qviE '^DC_TASK_DEFECT:[[:space:]]*(N/?A|none|無)([^[:alnum:]]|$)'; then
-  echo "dc: 模型回報工單瑕疵（DC_TASK_DEFECT），不跑驗收" >&2
-  exit 2
-fi
-
-# 完成定義在這裡，不在模型的自述。務必在 $d 底下跑 —— 驗收斷言用的是相對路徑，
-# 在呼叫端的 cwd 跑會全部找不到檔案而誤判 FAIL。
-# 跑 pin 那份而不是工單當下那份（篡改即 exit 3），並重跑 K 次全過才算 PASS：
-# 單次通過只告訴你「至少成功過一次」，重跑才抓得到時好時壞的驗收與副作用。
-K="${DC_VERIFY_K:-2}"
-echo "dc: 驗收 → ${WV} --pinned (cwd=$d, K=$K)" >&2
-i=1
-while [ "$i" -le "$K" ]; do
-  [ "$K" -gt 1 ] && echo "dc: 驗收第 ${i}/${K} 次" >&2
-  ( cd "$d" && "$WV" "$f" --pinned "$pin" ) || {
-    vrc=$?
-    [ "$vrc" = 3 ] && echo "dc: 驗收區塊被改動（exit 3）—— 這是紅旗，不是工單瑕疵，請主 session 看 diff" >&2
-    [ "$i" -gt 1 ] && echo "dc: 驗收第 ${i} 次才失敗 —— 驗收或改動不穩定（flaky），不要只憑第一次通過結案" >&2
-    exit "$vrc"
-  }
-  i=$((i + 1))
-done
-# 回歸比對（#21）：基準綠、完工紅或這個測試名不再出現 → 回歸。基準本來就紅、基準沒有的新測試都不算。
-# exit 4 讓 dcq 落 `*`（驗收未過、換下一隻、不罰模型）。
-if [ -n "${REG_LINE:-}" ] && [ -s "$reg_base" ]; then
-  reg_now="$(reg_run)"
-  # 按名比對：基準 $1==0、完工非 0 或完工沒有這個名 → 回歸
-  reg_bad="$(printf '%s\n' "$reg_now" | awk '
-    NR == FNR { b[$2] = $1; next }
-    NF >= 2 { n[$2] = $1 }
-    END { for (t in b) if (b[t] == 0 && (!(t in n) || n[t] != 0)) print t }' "$reg_base" - | sort)"
-  reg_bad="$(printf '%s' "$reg_bad" | xargs)"
-  if [ -n "$reg_bad" ]; then
-    echo "dc: REGRESSION：${reg_bad}" >&2
-    exit 4
-  fi
-fi
-exit 0
+DC_GATE_SCOPE=done DC_GATE_OUTPUT="$out" "$OCBIN/gate" judge "$f" "$d" "$pf_dir"
+exit $?
 }

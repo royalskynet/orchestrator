@@ -1,5 +1,17 @@
 # DEVLOG
 
+## 2026-11-08：Codex 執行人
+
+- 新增 `bin/codex-exec`，將 Codex JSONL 轉為 dc 開工、文字、指令與錯誤行；default 沿用設定模型，規則前置 prompt，使用 CLI 自帶 sandbox。
+- dc 支援 `codex/*` 分流、訂閱分級及 `DC_MODEL`，沿用 gate；dcq 以 `DCQ_MODELS` 明確指定，不新增層。
+- `test/dc_codex_test.sh` 用假 Codex 驗參數、錯誤 rc、額度字串及真實 gate 驗收產物。
+
+## 2026-11-08：抽共用 gate 判定鏈與作弊掃描
+
+- `bin/gate preflight` 統一 lint、負向對照、pin、regress 基準與範圍快照；`judge` 統一範圍、工單瑕疵、K 次驗收及回歸判定，供 dc／deep 共用。dc 保留執行、計費、鎖與上游分類。
+- judge 新增作弊掃描：本次新增 skip 或刪追蹤測試回 `exit 6`；排除跑前髒檔，`ALLOW-SKIP: <理由>` 可略過。dcq 既有 `*)` 分支會換下一隻、不罰模型，無須修改。
+- 新增 `test/gate_test.sh`，直接驗 preflight／judge 與作弊防線，並以移除 `exit 6` 的突變確認測試會失敗。
+
 ## 2026-11-08：regress:／writes!: 判失敗（#21）；Google 同額度桶一併冷卻（#11）
 
 - **#21**：`dc` 加 `regress: <指令>`——派工前拍基準、驗收後比對，基準綠→完工紅或消失＝`exit 4`；`writes!:` 越界 `exit 5`。`writes:` 舊行為不變（只標記）。dcq 對 4／5 走 `*)`：換下一隻、不罰模型。輪子：對照乾淨基準只算新增失敗（Chromium CQ「retry without patch」同概念），stdlib awk 自寫。

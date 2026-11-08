@@ -57,6 +57,9 @@ The rest of this README is in Traditional Chinese.
 | 6 | **驗收重跑 K 次（`DC_VERIFY_K`，預設 2）** | 單次通過只代表「至少成功過一次」。重跑才抓得到時好時壞的驗收與副作用。 |
 | 7 | **回歸比對 `regress:`（選用，rc=4）** | 驗收只看工單自己的區塊，範圍外的既有測試被弄紅照樣 PASS。工單寫一行 `regress: <指令>`（每行輸出 `<rc> <測試名>`），派工前在 cwd 拍基準（dcq 重試沿用 `.preflight/<id>/regress.base`），驗收過後再跑：基準綠、完工紅或消失＝回歸。基準本來就紅、新增的測試不算（#21）。 |
 | 8 | **範圍嚴格版 `writes!:`（選用，rc=5）** | `writes:` 越界只標 `SCOPE=over` 不判失敗；`writes!:` 越界直接判失敗、不跑驗收（#21）。 |
+| 9 | **作弊掃描（rc=6）** | 以 preflight HEAD 掃本次新增的 skip 標記與刪除的追蹤測試，排除跑前髒檔。合法停用須在工單寫 `ALLOW-SKIP: <理由>`；非 git 目錄不掃。 |
+
+判定鏈在 `bin/gate`，deep 共用（`preflight`／`judge`）。
 
 設好的預設（不是新能力，但沒有它們 dc 根本不會動）：
 
@@ -138,6 +141,8 @@ dc <task.md> [cwd] [-- <opencode run 原生旗標>...]
 - `--agent <name>` 可指定 opencode agent 控制工具權限，模型仍由 dc 釘死。
 
 環境變數：`DC_FREE_EXTRA`、`DC_FREE_MODEL`、`DC_SKIP_LINT=1`、`DC_BIN`、`DC_LOCK_WAIT`、`DC_NO_TIMEOUT_WARN=1`。
+`DC_MODEL=codex/default dc <task> <cwd>` 派 Codex 執行人（判定鏈同 O）；`codex/<model>` 指定模型，`default` 沿用 Codex CLI 設定。`bin/codex-exec` 預設 `--sandbox danger-full-access`（Codex 的 `workspace-write` 把 `.git` 設唯讀，執行人無法 commit），對話紀錄與憑證改由 dc 外層 `sandbox-exec` 擋，跟 opencode 一樣；`CODEX_EXEC_SANDBOX` 可覆寫，沿用既有登入；`CODEX_BIN` 可替換執行檔。
+`DCQ_MODELS=codex/default dcq add <task> <cwd> mid` 可指定佇列單模型，不新增 fallback 層。
 `DC_FREE_MODEL` 含 `/` 時當完整 `provider/model` 用，否則自動補 `opencode/` 前綴。
 
 ### cwd 互斥鎖在 `dc`，不只在 `dcq`
@@ -314,7 +319,7 @@ freepool-guard propose catalog/models.tsv   # 對清冊提增刪建議（只印�
 - **免費池剔出看得到**：`dcq plan` 首行印各 provider 數與剔出名單。清冊同步會帶進新 provider，各機 `opencode.json` 卻不會跟著改，所以清冊有、本機沒宣告的只要 1 隻（`DCQ_MISS_ALERT`），或主層只剩一家 provider，`dcq plan`／`dcq add` 就印 WARN 並推 TG；同一天名單沒變只推一則（#9）。`dcq doctor` 做同樣的健檢：被 `enabled_providers`／`disabled_providers` 刻意關掉的列為「略過」，其餘剔出算壞、exit 1。`dcq doctor --fix` 另印 `opencode.json` 補丁（key 用 `{env:}` 引用），用 `jq -s '.[0] * .[1]'` 併入。
 - **OmniRoute 健康檢查**：組池時對 `baseURL/models` 打一次（2 秒、結果快取 `DCQ_OR_HC_S`=120 秒），連不到就這次不派 `omniroute/*`（#12）。OmniRoute 在遠端、本機是 userspace Tailscale（沒有 TUN 介面）時，curl 與 opencode 都要走 Tailscale 的 SOCKS5／HTTP proxy：在 dcq 的環境設 `ALL_PROXY`／`HTTPS_PROXY`，否則健康檢查判掛、模型也連不到。`DCQ_OR_HC=0` 關閉檢查。
 
-Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`sub`），dcq 不派；由主 session 的 Agent 工具或 `codex exec` 直接用。dcq 派的 Claude 只有上面 `claude/*` 那幾列。
+Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`sub`）；Codex 可透過上述 `DC_MODEL`／`DCQ_MODELS` 明確指定。Claude Code 由主 session 的 Agent 工具直接用。dcq 派的 Claude 只有上面 `claude/*` 那幾列。
 
 難度在 `dcq add` 時定一次：呼叫端給的優先，沒給一律 mid（2026-10-24 起預設不問 Laya；`DCQ_TRIAGE=1` 才跑 `bin/triage`），同一張工單中途不換：
 
