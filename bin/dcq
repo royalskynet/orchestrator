@@ -467,12 +467,32 @@ to_midnight() { local h m s; IFS=: read -r h m s <<<"$(TZ="$1" date +%H:%M:%S)";
 QUOTA_GO_COOL_S="${DCQ_QUOTA_GO_COOL_S:-3600}"
 QUOTA_RPM_COOL_S="${DCQ_QUOTA_RPM_COOL_S:-120}"
 ZEN_QUOTA_COOL_S="${DCQ_ZEN_QUOTA_COOL_S:-}"
+# #11：Google 免費層多隻模型共用一個額度桶，429 訊息裡的 `model: <L>` 就是桶名（實測：請求 gemini-3.5-flash
+# 回 model: gemini-3.6-flash）。對應關係從觀測學（.health/quota-alias.tsv），不寫死名單。
+# 撞到桶 L：額度桶 alias 檔記下 請求模型→L，google/L 與所有標籤也是 L 的請求模型寫同一個到期時間一起冷卻。
+# ponytail: tsv 只增不減、每次線性掃；標籤數是十位數，不值得建索引。
+quota_alias_cool() {  # $1=請求模型 $2=桶標籤 $3=冷卻到期（epoch 秒）
+  local m="$1" l="$2" at="$3" al="$Q/.health/quota-alias.tsv" x list=""
+  mkdir -p "$Q/.health"
+  grep -qxF "$(printf '%s\t%s' "$m" "$l")" "$al" 2>/dev/null || printf '%s\t%s\n' "$m" "$l" >> "$al"
+  for x in "google/$l" $(awk -F'\t' -v l="$l" '$2 == l { print $1 }' "$al"); do
+    echo "$at" > "$Q/.health/$(fk "$x").cool"
+    case " $list " in *" $x "*) ;; *) list="$list $x" ;; esac
+  done
+  echo "dcq: 同額度桶 $l 一併冷卻：${list# }" >&2
+}
 cool_quota() {  # $1=model $2=該次 .out
-  local m="$1" k s
+  local m="$1" k s lb=""
   if grep -q '^dc: 額度窗口＝每分鐘' "$2" 2>/dev/null; then k="$(fk "$m")"; s=$QUOTA_RPM_COOL_S
   else case "$m" in
     */*) k="$(fk "$m")"
-         case "$m" in google/*) s=$(to_midnight America/Los_Angeles) ;; opencode-go/*) s=$QUOTA_GO_COOL_S ;; *) s=$UPSTREAM_COOL_S ;; esac ;;
+         case "$m" in
+           # 桶標籤只認「Quota exceeded for metric」那行裡的 model:（第一個）；抽不到照舊只冷這隻
+           google/*) s=$(to_midnight America/Los_Angeles)
+             lb="$(grep -m1 'Quota exceeded for metric' "$2" 2>/dev/null | grep -oE 'model: [a-z0-9.-]+' | head -1 | sed 's/^model: //')"
+             [ -n "$lb" ] && quota_alias_cool "$m" "$lb" "$(( $(now) + s ))" ;;
+           opencode-go/*) s=$QUOTA_GO_COOL_S ;; *) s=$UPSTREAM_COOL_S ;;
+         esac ;;
     *) k=@zen; s=${ZEN_QUOTA_COOL_S:-$(to_midnight UTC)} ;;
   esac; fi
   echo $(( $(now) + s )) > "$Q/.health/$k.cool"; rm -rf "$Q/.health/$(fk "$m").fails"

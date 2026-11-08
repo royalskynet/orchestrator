@@ -1,5 +1,11 @@
 # DEVLOG
 
+## 2026-11-08：regress:／writes!: 判失敗（#21）；Google 同額度桶一併冷卻（#11）
+
+- **#21**：`dc` 加 `regress: <指令>`——派工前拍基準、驗收後比對，基準綠→完工紅或消失＝`exit 4`；`writes!:` 越界 `exit 5`。`writes:` 舊行為不變（只標記）。dcq 對 4／5 走 `*)`：換下一隻、不罰模型。輪子：對照乾淨基準只算新增失敗（Chromium CQ「retry without patch」同概念），stdlib awk 自寫。
+- **#11**：本機 log 6 筆請求 3.5 回 3.6 標籤、2 筆 3.7→3.8、11 筆 3-flash-preview→3-flash，確認共用額度桶。`cool_quota` 抽 `Quota exceeded for metric` 行的 `model:`，`quota_alias_cool` 從觀測學對應並一起冷卻，不寫死名單。
+- 派 deep 執行：deep 的測試夾具把 `$T` 寫成字面量（regress 指令讀不到檔），且改了 `watch_oc` 回傳格式；主 session 修夾具、還原 `watch_oc`／`bon_run`。
+
 ## 2026-11-02：dcq 三點借鑒（DeepSeek Harness〈Super-agent Design〉）wheel 裁決
 
 - **派工回報限字數**：不做——`dcq wait` 只回 `PASS`／`FAIL rc=N`（上一節已實測）。

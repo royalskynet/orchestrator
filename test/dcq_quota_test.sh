@@ -19,6 +19,8 @@ case "$DC_FREE_MODEL" in
   zen-a)        echo "Error: Free usage limit reached."; echo "dc: 上游額度用完（Free usage limit reached），已提早結束"; exit 1 ;;
   google/g1)    echo "dc: 上游額度用完（Quota exceeded for metric），已提早結束"; exit 1 ;;
   google/g2)    echo "dc: 上游額度用完（You exceeded your current quota），已提早結束"; echo "dc: 額度窗口＝每分鐘"; exit 1 ;;
+  google/g3)    echo 'level=ERROR generateContent: Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: g3l'; echo "dc: 上游額度用完（Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: g3l），已提早結束"; exit 1 ;;
+  google/g4)    echo 'level=ERROR generateContent: Quota exceeded for metric: generate_content_free_tier_requests, limit: 5, model: g4l'; echo "dc: 上游額度用完（Quota exceeded for metric），已提早結束"; echo "dc: 額度窗口＝每分鐘"; exit 1 ;;
   kilo/k1)      echo "dc: 上游限流（429），opencode 會照 retry-after 久等重試，已提早結束"; exit 1 ;;
   kilo/bad)     echo "boom"; echo "dc: opencode run rc=1（常見：上游掛=1、逾時=124、權限拒絕）"; exit 1 ;;
 esac
@@ -54,6 +56,14 @@ l=$(left google_g2); ck "google/g2 RPM 只冷 ≤120s（${l}s）" '[ "$l" -gt 0 
 ck "google 額度不碰 Zen 冷卻檔以外的 provider" '[ ! -e "$H/@google.cool" ]'
 ck "kilo/k1 限流記 why=upstream" '[ "$(why kilo/k1)" = upstream ]'
 ck "kilo/bad 普通 rc=1 照記 exit" '[ "$(why kilo/bad)" = exit ]'
+
+# 2b. #11：Google 免費層多隻共用一個額度桶，錯誤訊息的 model: 標籤＝桶名 → 同桶的請求模型一起冷卻（只從觀測學）
+add j2b w2; run "google/g3 google/g4"
+ck "g3 的桶標籤 g3l 冷卻" '[ "$(left google_g3l)" -gt 0 ]'
+ck "請求模型 g3 自己也冷" '[ "$(left google_g3)" -gt 0 ]'
+ck "alias 檔記 g3→g3l" 'grep -qx "$(printf "google/g3\tg3l")" "$H/quota-alias.tsv"'
+ck "印同額度桶一併冷卻" 'grep -q "同額度桶 g3l 一併冷卻" "$T/run.out"'
+ck "每分鐘窗口的 g4 不進 alias" '! grep -q "google/g4" "$H/quota-alias.tsv"'
 
 # 3. 排名：quota／upstream 不算樣本；普通失敗照算
 # 日期用今天：寫死舊日期會被 7 天假釋窗（RANK_PAROLE_D）拉回 manual，冷宮驗不到

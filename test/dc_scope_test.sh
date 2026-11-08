@@ -56,4 +56,12 @@ git -C "$T/r" checkout -q pre.txt
 run "writes: src/" "$T/r/pre.txt"
 chk "改到追蹤檔且在範圍外：印 SCOPE=over" "$(over)" "1"
 git -C "$T/r" checkout -q pre.txt
+# writes!: 嚴格版（#21）：越界判失敗 rc=5；範圍內照常 rc=0；兩行都寫以 writes! 為準
+run "writes!: src/" "$T/r/src/x.txt $T/r/stray.txt"
+chk "strict 越界：rc=5" "$(cat "$T/rc")" "5"
+chk "strict 越界：印 SCOPE=over(strict) 與檔名" "$(grep -c 'SCOPE=over(strict).*stray.txt' "$T/o" | tr -d ' ')" "1"
+run "writes!: src/" "$T/r/src/x.txt"
+chk "strict 範圍內：rc=0" "$(cat "$T/rc")" "0"
+run "$(printf 'writes: stray.txt\nwrites!: src/')" "$T/r/stray.txt"
+chk "writes 與 writes! 並存以 strict 為準：rc=5" "$(cat "$T/rc")" "5"
 exit "$fail"

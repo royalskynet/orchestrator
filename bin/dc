@@ -2,6 +2,10 @@
 { # 整檔包成一個複合指令：bash 先讀完整段才執行，執行中被改寫（git pull、dc 改自己）不會用舊偏移讀到碎片（fix 9499）
 # dc <task.md> [cwd] [-- <opencode run 原生旗標>...] — 派工給 opencode，完成定義＝wo-verify 通過。
 #
+# 工單可選行首 `regress: <指令>`：派工前後各跑一次，基準綠、完工紅或消失 → REGRESSION（exit 4）。
+# 工單可選行首 `writes!: <路徑…>`：改動超出即判失敗、不跑驗收（exit 5）；`writes:` 只標記不判。
+# exit code：0 PASS／1 執行或驗收失敗／2 工單契約錯或 FATAL／3 驗收區塊被改／4 REGRESSION／5 SCOPE strict／75 cwd 被鎖。
+#
 # 就是 opencode run 的薄封裝。不另建工具鏈，不做 deep-run 那套：
 # 不需要 tmux detach、不需要 sandbox proxy 偵測、不需要獨立 CLAUDE_CONFIG_DIR ——
 # 那些都是 deep-run 為了「沙箱外執行」付的代價，dc 走 opencode 客戶端路徑沒這些問題。
@@ -184,6 +188,7 @@ if [ -n "$pf_dir" ] && [ -z "$pf_pin" ] && [ "$lint_ok" = 1 ] && [ "$negctl_ok" 
   [ -z "$pftmp" ] || rm -f "$pftmp"
   [ -f "$pf_dir/pin" ] || echo "dc: 寫不了前置檢查憑證（不影響派工）：${pf_dir}" >&2
 fi
+
 
 # 未指定模型就釘死預設免費模型（不讓 opencode config 的 per-agent 付費 model 生效）；
 # 有指定則沿用（已驗證是免費）。
@@ -411,12 +416,61 @@ wt_before="$(_wt_snap)"
 # --- 範圍斷言（I3，10-23）：工單可選的 `writes: 路徑1, 路徑2`（行首；路徑相對 cwd 或絕對、目錄用 dir/、可用 glob）---
 # 跑完後 git 看得到的改動檔（相對 ${d}）⊆ writes，否則在 log 印 `SCOPE=over`、dcq 把 SCOPE=over 記進 job 檔。
 # 只標記不判 FAIL（使用者定）：驗收照跑、exit code 不變。沒寫 writes 的工單不檢查。
+# `writes!:` 嚴格版（#21）：同樣語法，越界印 SCOPE=over(strict)、不跑驗收、exit 5；兩行都寫以 writes! 為準。
 # ponytail: 只看 git 追蹤得到／未被 ignore 的檔、跑前就髒的檔不算；路徑含空白會誤判。
-_scope_writes() { sed -n -E 's/^[Ww][Rr][Ii][Tt][Ee][Ss][[:space:]]*[:：][[:space:]]*//p' "$f" | head -1 | tr ',，' '  '; }
+_scope_line() {  # $1=行標籤正規式。後面接 `[[:space:]]*[:：]`：`writes:` 不會吃到 `writes!:`，反之亦然
+  # 先只吃 ASCII 冒號：sed 的範圍式（[Ss]）碰上多一位元組字元（全形冒號）會報 illegal byte sequence；
+  # 吃到就完事，吃不到才換全形冒號（用 awk，正規式由變數傳，不給 sed 看全形字元）。
+  local l
+  l="$(sed -n -E "s/^$1[[:space:]]*:[[:space:]]*//p" "$f" | head -1)"
+  [ -z "$l" ] && l="$(awk -v re="^$1[ \t]*$(_FW)[ \t]*" '{ s = $0; if (sub(re, "", s)) { print s; exit } }' "$f")"
+  printf '%s\n' "$l" | sed 's/,/ /g; s/，/ /g'; }
+_FW() { printf '\357\274\232'; }
+_scope_writes() { _scope_line '[Ww][Rr][Ii][Tt][Ee][Ss]'; }          # 只認 writes:（writes! 後面是 !，不符 [space:：]）
+_scope_strict() { _scope_line '[Ww][Rr][Ii][Tt][Ee][Ss]!'; }
+# regress: <指令>（#21）：基準檔案跨模型重試共用，必須是第一次派工前 cwd 的狀態。
+REG_LINE="$(_scope_line '[Rr][Ee][Gg][Rr][Ee][Ss][Ss]')"
+REG_TIMEOUT="${DC_REGRESS_TIMEOUT:-600}"
+# 只留 `<rc> <測試名>` 行；逾時用既有的 timeout（沒有就不限時，DC_REGRESS_TIMEOUT 不生效）
+if command -v timeout >/dev/null 2>&1; then
+  reg_run() { ( cd "$d" && exec timeout "$REG_TIMEOUT" bash -c "$REG_LINE" ) 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+ [^[:space:]]' || true; }
+else
+  reg_run() { ( cd "$d" && exec bash -c "$REG_LINE" ) 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+ [^[:space:]]' || true; }
+fi
+# 基準存哪：有 DC_PREFLIGHT_DIR 就存 $pf_dir/regress.base——同一張工單換模型重試時 cwd 已被前一隻模型改過，
+# 基準必須是第一次派工前的；沒設就存暫存目錄（EXIT trap 一起刪）。
+# 多隻模型併發建基準（工單無 preflight 目錄時 id 相同）：先寫暫存再 link/mv，先到的那份留著。
+reg_base=""
+if [ -n "$pf_dir" ] && mkdir -p "$pf_dir" 2>/dev/null; then reg_base="$pf_dir/regress.base"
+elif [ -n "$REG_LINE" ]; then
+  reg_dir="$(mktemp -d "${TMPDIR:-/tmp}/dc-regress.XXXXXX")" || exit 2
+  reg_base="$reg_dir/base"
+  trap 'rm -rf "$reg_dir" "$pintmp"' EXIT
+fi
+# 基準在 do-nothing 對照之後、送 opencode 之前拍（別人未提交的改動讓既有測試紅，是既有狀態不是模型的帳）；
+# 基準拍不出可解析的行＝工單契約錯（exit 2）。既有基準直接沿用，不重跑。
+# 有 preflight 目錄時要在同目錄寫完再換名（同一張工單並行時第一份算）；先比大小：沿用那份不能被改寫。
+reg_t=""
+if [ -n "$REG_LINE" ] && [ -z "$pf_dir" ]; then reg_t="$reg_dir/.base.$$"
+elif [ -n "$REG_LINE" ]; then reg_t="$pf_dir/.regress.base.$$"; fi
+if [ -n "$REG_LINE" ] && [ -s "$reg_base" ]; then
+  echo "dc: 沿用 regress 基準 ${reg_base}" >&2
+elif [ -n "$REG_LINE" ]; then
+  reg_run > "$reg_t"
+  [ -s "$reg_base" ] || mv -f "$reg_t" "$reg_base" 2>/dev/null || cp "$reg_t" "$reg_base"
+  rm -f "$reg_t"
+  if ! grep -qE '^[0-9]+ [^[:space:]]' "$reg_base"; then
+    rm -f "$reg_base"; echo "dc: regress 指令沒有輸出 <rc> <測試名> 行" >&2; exit 2
+  fi
+  echo "dc: regress 基準 $(grep -cE '^[0-9]+ [^[:space:]]' "$reg_base") 筆" >&2
+fi
 _scope_changed() {
   { git -C "$d" diff --name-only --relative "$scope_head" -- 2>/dev/null; git -C "$d" ls-files -o --exclude-standard 2>/dev/null; } | sort -u
 }
-scope_w="$(_scope_writes)"; scope_head=""; scope_pre=""
+# writes!: 嚴格版（#21）——越界不跑驗收、exit 5。兩行都寫以 writes! 為準。
+scope_strict="$(_scope_strict)"
+scope_w="$(_scope_writes '[]')"; [ -n "$scope_strict" ] && scope_w="$scope_strict"
+scope_head=""; scope_pre=""
 if [ -n "$scope_w" ] && scope_head="$(git -C "$d" rev-parse HEAD 2>/dev/null)"; then
   scope_pre="$(git -C "$d" status --porcelain 2>/dev/null | sed 's/^...//')"
 else scope_w=""; fi
@@ -546,6 +600,10 @@ if [ -n "$scope_w" ]; then
 $(_scope_changed)
 EOF_SCOPE
   set +f
+  if [ -n "$scope_over" ] && [ -n "$scope_strict" ]; then
+    echo "dc: SCOPE=over(strict)（改動超出工單 writes!：${scope_w}）：${scope_over}" >&2
+    exit 5
+  fi
   [ -n "$scope_over" ] && echo "dc: SCOPE=over（改動超出工單 writes：${scope_w}）：${scope_over}" >&2
 fi
 [ "$rl" = 5 ] && { echo "dc: 上游額度用完（$(grep -m1 -oE "$QUOTA_RE" "$out" | grep -oE '(Free usage limit reached|FreeUsageLimitError|Go usage limit exceeded|You exceeded your current quota|Quota exceeded for metric[^"]*|RESOURCE_EXHAUSTED|Claude AI usage limit reached|You.ve hit your [a-z ]*limit)' | head -1 | cut -c1-160)），已提早結束" >&2; grep -qE 'PerMinute|per minute' "$out" && echo "dc: 額度窗口＝每分鐘" >&2; exit 1; }
@@ -589,5 +647,20 @@ while [ "$i" -le "$K" ]; do
   }
   i=$((i + 1))
 done
+# 回歸比對（#21）：基準綠、完工紅或這個測試名不再出現 → 回歸。基準本來就紅、基準沒有的新測試都不算。
+# exit 4 讓 dcq 落 `*`（驗收未過、換下一隻、不罰模型）。
+if [ -n "${REG_LINE:-}" ] && [ -s "$reg_base" ]; then
+  reg_now="$(reg_run)"
+  # 按名比對：基準 $1==0、完工非 0 或完工沒有這個名 → 回歸
+  reg_bad="$(printf '%s\n' "$reg_now" | awk '
+    NR == FNR { b[$2] = $1; next }
+    NF >= 2 { n[$2] = $1 }
+    END { for (t in b) if (b[t] == 0 && (!(t in n) || n[t] != 0)) print t }' "$reg_base" - | sort)"
+  reg_bad="$(printf '%s' "$reg_bad" | xargs)"
+  if [ -n "$reg_bad" ]; then
+    echo "dc: REGRESSION：${reg_bad}" >&2
+    exit 4
+  fi
+fi
 exit 0
 }

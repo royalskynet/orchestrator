@@ -55,6 +55,8 @@ The rest of this README is in Traditional Chinese.
 | 4 | **評分器釘住（`--pinned`，rc=3）** | 驗收區塊就在工單裡，執行人改得到的評分器他早晚會改到過關。派工前拍一份 pin，驗收跑 pin 並逐行比對；不一致即判篡改，不跑被改過的版本。dcq 換模型重試同一張時，沿用第一次留下的前置檢查憑證（`$DCQ_HOME/.preflight/<id>/pin`）：lint 與負向對照不重跑，評分器也不重抽，前一隻模型改過的驗收不會被釘成新基準（2026-10-21）。 |
 | 5 | **do-nothing 負向對照（派工前，rc=2）** | 什麼都不做也會通過的驗收不是驗收。派工前先在同一 cwd 跑一次，此刻就過＝空包彈或 no-op，不派工。逃生門 `NEG-CONTROL: n/a`。 |
 | 6 | **驗收重跑 K 次（`DC_VERIFY_K`，預設 2）** | 單次通過只代表「至少成功過一次」。重跑才抓得到時好時壞的驗收與副作用。 |
+| 7 | **回歸比對 `regress:`（選用，rc=4）** | 驗收只看工單自己的區塊，範圍外的既有測試被弄紅照樣 PASS。工單寫一行 `regress: <指令>`（每行輸出 `<rc> <測試名>`），派工前在 cwd 拍基準（dcq 重試沿用 `.preflight/<id>/regress.base`），驗收過後再跑：基準綠、完工紅或消失＝回歸。基準本來就紅、新增的測試不算（#21）。 |
+| 8 | **範圍嚴格版 `writes!:`（選用，rc=5）** | `writes:` 越界只標 `SCOPE=over` 不判失敗；`writes!:` 越界直接判失敗、不跑驗收（#21）。 |
 
 設好的預設（不是新能力，但沒有它們 dc 根本不會動）：
 
@@ -308,7 +310,7 @@ freepool-guard propose catalog/models.tsv   # 對清冊提增刪建議（只印�
 
 - **額度用完不算模型失敗**：`dc` 看到 `Free usage limit reached`（Zen）、`Go usage limit exceeded`、Google 的 `Quota exceeded`／`RESOURCE_EXHAUSTED` 就提早結束，dcq 記 `why=quota`，不進 `.fails`、不拉低排名（issue #8）。限流與上游不可用記 `why=upstream`，同樣不算樣本。
 - **Zen 額度整池冷卻到 UTC 午夜**（台灣 08:00）：Zen 免費額度按**出口 IP** 計，不分模型，同一台機器（或同一出口的多台）共用一份。撞到一次就整個 Zen 池停到重置，`dcq plan` 首行會寫「Zen 免費池冷卻到 HH:MM」（#10）。多機共用冷卻沒做：同出口的另一台要自己撞一次才知道。
-- **Google AI Studio**：每日額度（RPD）冷到太平洋時間午夜，每分鐘額度（RPM）只冷 120 秒（`DCQ_QUOTA_RPM_COOL_S`）。免費層 RPD 很小（個位數到幾十次），只適合放兜底；免費層的輸入可能被 Google 用於改進產品，機敏工單別派（#11）。
+- **Google AI Studio**：每日額度（RPD）冷到太平洋時間午夜，每分鐘額度（RPM）只冷 120 秒（`DCQ_QUOTA_RPM_COOL_S`）。免費層 RPD 很小（個位數到幾十次），只適合放兜底；免費層的輸入可能被 Google 用於改進產品，機敏工單別派（#11）。多隻模型共用一個額度桶（請求 `gemini-3.5-flash` 的 429 寫 `model: gemini-3.6-flash`），dcq 把錯誤裡的 `model:` 記進 `.health/quota-alias.tsv`，同桶模型一起冷卻。
 - **免費池剔出看得到**：`dcq plan` 首行印各 provider 數與剔出名單。清冊同步會帶進新 provider，各機 `opencode.json` 卻不會跟著改，所以清冊有、本機沒宣告的只要 1 隻（`DCQ_MISS_ALERT`），或主層只剩一家 provider，`dcq plan`／`dcq add` 就印 WARN 並推 TG；同一天名單沒變只推一則（#9）。`dcq doctor` 做同樣的健檢：被 `enabled_providers`／`disabled_providers` 刻意關掉的列為「略過」，其餘剔出算壞、exit 1。`dcq doctor --fix` 另印 `opencode.json` 補丁（key 用 `{env:}` 引用），用 `jq -s '.[0] * .[1]'` 併入。
 - **OmniRoute 健康檢查**：組池時對 `baseURL/models` 打一次（2 秒、結果快取 `DCQ_OR_HC_S`=120 秒），連不到就這次不派 `omniroute/*`（#12）。OmniRoute 在遠端、本機是 userspace Tailscale（沒有 TUN 介面）時，curl 與 opencode 都要走 Tailscale 的 SOCKS5／HTTP proxy：在 dcq 的環境設 `ALL_PROXY`／`HTTPS_PROXY`，否則健康檢查判掛、模型也連不到。`DCQ_OR_HC=0` 關閉檢查。
 
