@@ -249,6 +249,9 @@ if [ "$t" != free ]; then
   last=$(stat -c %Y "$ST" 2>/dev/null || stat -f %m "$ST" 2>/dev/null || echo 0)
   # DC_TG_MUTE：常態使用的訂閱模型只落帳不發 TG（11-07 使用者：deepseek flash 天天用，通知是噪音）；空字串＝全部照發
   _mute=0; for _x in ${DC_TG_MUTE-opencode-go/deepseek-v4.1-flash}; do [ "$_x" = "$m" ] && _mute=1; done
+  # 工單內有獨立一行 <!-- dc:billing-quiet -->：只落帳不發 TG（11-07 使用者：Mythos 派的單是例外）。
+  # 標記寫在工單內容裡，因為 dcq 會把工單複製進 worktree，路徑和呼叫端 env 都帶不到這裡
+  grep -qx '<!-- dc:billing-quiet -->' "$f" 2>/dev/null && _mute=1
   if [ "$_mute" = 0 ] && [ $((now - last)) -ge "${DC_TG_EVERY:-600}" ]; then
     prev=$(cat "$ST" 2>/dev/null || echo "$((n - 1))"); skipped=$((n - 1 - prev))
     [ "$skipped" -gt 0 ] && msg="${msg}（另有 ${skipped} 筆被限流，見 billing.tsv）"

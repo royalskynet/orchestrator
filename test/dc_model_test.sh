@@ -74,6 +74,11 @@ chk "靜音模型照樣落帳"                      "$(grep -c "sub	opencode-go/
 chk "DC_TG_MUTE= 空字串恢復警示"            "$(try DC_TG_MUTE= DC_FREE_MODEL=opencode-go/deepseek-v4.1-flash)" ran:sub
 rm -f "$T/q/logs/.billing-tg-last"
 chk "靜音不影響其他訂閱模型"                "$(try DC_FREE_MODEL=opencode-go/glm-5.3)" ran:sub
+# 工單帶 <!-- dc:billing-quiet -->（Mythos 派的單）：照派、照落帳、不發 TG
+rm -f "$T/q/logs/.billing-tg-last"; : > "$T/q/logs/billing.tsv"; printf '# t\n<!-- dc:billing-quiet -->\n' > "$T/t.md"
+chk "billing-quiet 工單不發 TG"             "$(try DC_FREE_MODEL=opencode-go/glm-5.3)" ran:-
+chk "billing-quiet 工單照樣落帳"            "$(grep -c "sub	opencode-go/glm-5.3	$T/t.md" "$T/q/logs/billing.tsv")" 1
+printf '# t\n' > "$T/t.md"
 printf '#!/bin/sh\nexit 1\n' > "$T/bin/hpush"
 chk "免費模型不進 billing.tsv"             "$(try DC_FREE_MODEL=big-pickle >/dev/null; grep -c big-pickle "$T/q/logs/billing.tsv")" 0
 # omniroute 沒 key：要在派工前就停，不是送空 key 去吃 401

@@ -230,7 +230,7 @@ dcq cancel <job-id>               # 取消一張（殺整棵程序樹、階梯�
 
 `dcq status` 會列出每隻模型的 `busy=n/max` 與冷卻剩餘秒數。
 
-環境變數：`DCQ_HOME`（預設 `~/.dcq`）、`DCQ_JOBS`、`DCQ_POOL_GO`、`DCQ_POOL_ZEN`、`DCQ_POOL_PAID`、`DCQ_FREE_ROUNDS`、`DCQ_MODELS`、`DCQ_MODEL_MAX`、`DCQ_ALLOWED_FAILS`、`DCQ_COOLDOWN_S`、`DCQ_STALL_S`、`DCQ_JOB_MAX`、`DCQ_ATTEMPT_MAX`、`DCQ_POLL_S`。舊名 `DCQ_BREAK_N`／`DCQ_BREAK_S` 仍可用，對應到 `DCQ_ALLOWED_FAILS`／`DCQ_COOLDOWN_S`。
+環境變數：`DCQ_HOME`（預設 `~/.dcq`）、`DCQ_JOBS`、`DCQ_POOL_GO`、`DCQ_POOL_ZEN`、`DCQ_POOL_PAID`、`DCQ_FREE_ROUNDS`、`DCQ_MODELS`、`DCQ_MODEL_MAX`、`DCQ_ALLOWED_FAILS`、`DCQ_COOLDOWN_S`、`DCQ_STALL_S`、`DCQ_JOB_MAX`、`DCQ_ATTEMPT_MAX`、`DCQ_POLL_S`、`DCQ_AUTOSTART`（預設 1；0 關閉入列時自動 dcq start）。舊名 `DCQ_BREAK_N`／`DCQ_BREAK_S` 仍可用，對應到 `DCQ_ALLOWED_FAILS`／`DCQ_COOLDOWN_S`。
 
 自檢（都用假的下游，不打上游）：`./test/dcq_test.sh`（佇列、模型池、權重 fallback、冷卻、併發槽、watchdog、防空轉、cancel）、`./test/dc_lock_test.sh`（cwd 鎖）、`./test/dc_model_test.sh`（模型閘：哪些准派、哪些要拒）
 

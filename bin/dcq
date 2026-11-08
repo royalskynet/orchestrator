@@ -858,7 +858,17 @@ cmd_add() {
       || echo "dcq: ⚠ 優先「${DCQ_PREFER}」在免費層找不到相符模型，照原順序" >&2
   fi
   echo "dcq: 難度 ${tier}，順序 ${order}${DCQ_PREFER:+，優先 $DCQ_PREFER}" >&2
-  runner_alive || echo "dcq: 沒有 runner 在跑，請執行 dcq start -j 2" >&2
+  if ! runner_alive; then
+    if [ "${DCQ_AUTOSTART:-1}" = "1" ] && command -v tmux >/dev/null 2>&1; then
+      if ( JOBS="${DCQ_JOBS:-2}"; export JOBS; cmd_start ) >&2; then
+        echo "dcq: 沒有 runner，已自動 dcq start" >&2
+      else
+        echo "dcq: 沒有 runner 在跑，請執行 dcq start -j 2" >&2
+      fi
+    else
+      echo "dcq: 沒有 runner 在跑，請執行 dcq start -j 2" >&2
+    fi
+  fi
   echo "$id"
 }
 
@@ -1554,11 +1564,13 @@ brief_lines() {
     | brief_sanitize | awk '!seen[$0]++'
 }
 job_brief() {
-  local id="$1" job last model merged merge st=fail flags="" skp="" line n=0 files="" cnt
-  job="$Q/done/$id.job"; [ -e "$job" ] || job="$Q/failed/$id.job"
-  [ -e "$job" ] || { echo "dcq: 查無此單 $id （不在 done／failed）"; return 1; }
+  local id="$1" job="" state="" last model merged merge st=fail flags="" skp="" line n=0 files="" cnt
+  local _d
+  for _d in pending running done failed; do [ -e "$Q/$_d/$id.job" ] && { job="$Q/$_d/$id.job"; state="$_d"; break; }; done
+  [ -e "$job" ] || { echo "dcq: 查無此單 $id"; return 1; }
+  case "$state" in done) st=ok ;; failed) st=fail ;; *) st="$state" ;; esac
   last="$(sed -n 's/^LAST_RC=//p' "$job" | tail -1)"
-  [ -e "$Q/done/$id.job" ] && st=ok
+  [ "$state" = done ] && st=ok
   model="$(sed -n 's/^MODEL=//p' "$job" | tail -1)"
   # 取消與越界寫檔是呼叫端判「重派／要人看」的訊號，必須獨立成欄，不能併進 rc
   grep -q '^CANCELLED=1' "$job" && { st=cancelled; flags="$flags cancelled"; }
@@ -1568,10 +1580,11 @@ job_brief() {
   merge="$(sed -n 's/^MERGE=//p' "$job" | tail -1)"
   if [ -n "$(sed -n 's/^WT=//p' "$job")" ] && [ -z "$merged" ] && [ -z "$merge" ]; then merge=pending; fi
   printf '%s  result=%s%s%s%s%s\n' "$id" "$st" \
-    "$([ "$st" = ok ] || [ "$st" = cancelled ] || echo " rc=${last:-?}")" \
+    "$([ "$st" = ok ] || [ "$st" = cancelled ] || [ "$st" = pending ] || [ "$st" = running ] || echo " rc=${last:-?}")" \
     "$flags$skp" "${merged:+ merged=1}" "${merge:+ merge=$merge}"
   [ -n "$model" ] && echo "  task: $(sed -n -e 's/^TASK0=//p' -e 's/^TASK=//p' "$job" | head -1)  model=$model"
   [ "$st" = ok ] && [ -z "$flags" ] && return 0
+  if [ "$state" = pending ] || [ "$state" = running ]; then return 0; fi
   for out in "$Q"/logs/"$id".*.out; do
     [ -e "$out" ] || continue
     case "$(basename "$out")" in "$id".bon*) continue ;; esac
