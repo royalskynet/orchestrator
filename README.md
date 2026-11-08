@@ -306,7 +306,7 @@ freepool-guard propose catalog/models.tsv   # 對清冊提增刪建議（只印�
 
 各家免費額度實測（2026-10-25）：Groq 免費方案 8000 TPM，一次 opencode 請求約 8000 token，只放 easy；NVIDIA NIM 約 40 RPM，併發上限 2；OpenRouter `:free` 會被帳號的 guardrail（provider／資料政策限制）擋成 404，要先在 openrouter.ai 設定放行；Kilo Gateway 會記錄 prompt，機敏工單別派；Kilo 免 key 的免費額度是**整個帳號共用**，一次把十幾隻模型全探測一遍就會把當期額度打光（2026-10-26 實測：`oc-free-check -p kilo` 22 隻跑完後，所有 `kilo/*` 都回 `Free usage limit reached`），要探測就分批。
 - 訂閱層：`sub`（`opencode-go/*`）。
-- Claude 層（2026-10-25）：`sub` 且 `dc_id` 為 `claude/*`（目前 `claude/claude-haiku-5-5`），只在 `DCQ_ORDER=sub`（派os）排最後、API 前；派o／派of 不派。dc 經 `bin/claude-exec` 叫 `claude -p`（claude.ai 訂閱額度，與主 session 共用，provider 上限 1）。不能加 `--bare`（只認 API key＝按量計費）；`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` 有設時 bypassPermissions 會被降級，所以工具用 `--allowedTools` 明列。`DCQ_POOL_CLAUDE=` 關掉。
+- 派os 的 CLI 訂閱層：codex → claude。Codex 使用 ChatGPT 訂閱；`CODEX_BIN` 或 PATH 上的 `codex` 不可用時跳過。Claude：`sub` 且 `dc_id` 為 `claude/*`（目前 `claude/claude-haiku-5-5`），只在 `DCQ_ORDER=sub`（派os）排最後、API 前；派o／派of 不派。dc 經 `bin/claude-exec` 叫 `claude -p`（claude.ai 訂閱額度，與主 session 共用，provider 上限 1）。不能加 `--bare`（只認 API key＝按量計費）；`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` 有設時 bypassPermissions 會被降級，所以工具用 `--allowedTools` 明列。`DCQ_POOL_CLAUDE=` 關掉。
 - API 層：`api`，`DCQ_ALLOW_API=1` 才接，預設不用。
 
 兜底層與訂閱層也做層內排序（2026-10-21），規則同免費層：依每 PASS 秒數升冪，停滯率過高或 0 PASS 的墊該層最後，樣本不足留原位。只在層內排，不跨層搬。`DCQ_MODELS` 有設或 `DCQ_AUTORANK=0` 就不排。
@@ -319,7 +319,7 @@ freepool-guard propose catalog/models.tsv   # 對清冊提增刪建議（只印�
 - **免費池剔出看得到**：`dcq plan` 首行印各 provider 數與剔出名單。清冊同步會帶進新 provider，各機 `opencode.json` 卻不會跟著改，所以清冊有、本機沒宣告的只要 1 隻（`DCQ_MISS_ALERT`），或主層只剩一家 provider，`dcq plan`／`dcq add` 就印 WARN 並推 TG；同一天名單沒變只推一則（#9）。`dcq doctor` 做同樣的健檢：被 `enabled_providers`／`disabled_providers` 刻意關掉的列為「略過」，其餘剔出算壞、exit 1。`dcq doctor --fix` 另印 `opencode.json` 補丁（key 用 `{env:}` 引用），用 `jq -s '.[0] * .[1]'` 併入。
 - **OmniRoute 健康檢查**：組池時對 `baseURL/models` 打一次（2 秒、結果快取 `DCQ_OR_HC_S`=120 秒），連不到就這次不派 `omniroute/*`（#12）。OmniRoute 在遠端、本機是 userspace Tailscale（沒有 TUN 介面）時，curl 與 opencode 都要走 Tailscale 的 SOCKS5／HTTP proxy：在 dcq 的環境設 `ALL_PROXY`／`HTTPS_PROXY`，否則健康檢查判掛、模型也連不到。`DCQ_OR_HC=0` 關閉檢查。
 
-Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`sub`）；Codex 可透過上述 `DC_MODEL`／`DCQ_MODELS` 明確指定。Claude Code 由主 session 的 Agent 工具直接用。dcq 派的 Claude 只有上面 `claude/*` 那幾列。
+Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`sub`）；Codex 可透過上述 `DC_MODEL`／`DCQ_MODELS` 明確指定，也會納入派os 的 CLI 訂閱層。Claude Code 由主 session 的 Agent 工具直接用。dcq 派的 Claude 只有上面 `claude/*` 那幾列。
 
 難度在 `dcq add` 時定一次：呼叫端給的優先，沒給一律 mid（2026-10-24 起預設不問 Laya；`DCQ_TRIAGE=1` 才跑 `bin/triage`），同一張工單中途不換：
 

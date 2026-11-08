@@ -108,3 +108,5 @@
 - （條件觸發，現在不做）依真實工單的通過率與耗時自動排序：等真實工單顯示目前排序明顯不對時再做。
 - （已結案）freecheck 回報 Go 每週額度 5%：來源是 Hermes 的 Coco，它自 10-01 起預設 `opencode-go/deepseek-v4.1-flash`（訂閱模型）。Go 額度按模型各自計，Coco 和 dcq 付費層的 deepseek-v4.1-flash 共用同一份月額度（13 萬次），量級不衝突。
 - （已結案，不是問題）`dc` 蓋過 `/usr/bin/dc` 計算機：本機腳本（openclaw／claude scripts、hooks、~/.local/bin、~/dev/*/bin）沒有人把 dc 當計算機用（`| dc`、`dc -e` 皆 0 筆）。注意 33 個 LaunchAgent 的 PATH 含 `~/.local/bin`，日後若有腳本要用計算機請寫 `/usr/bin/dc`。就算誤呼叫，dc 也會報錯退出，不會靜默算錯。
+
+派os 的 CLI 訂閱層：codex → claude。

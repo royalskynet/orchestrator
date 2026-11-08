@@ -223,12 +223,24 @@ drop_disabled() { local m o=""; for m in $1; do case " $DISABLED_IDS " in *" $m 
 # deepseek-v4-flash 已移除：上游退役只剩轉址（hermes-agent#131254），長 session 必 400（opencode#48093）。
 # ponytail: 單一簡單工單、每隻 1 樣本，只分得出快慢和明顯壞的；真實工單累積後再依通過率重排。
 # 額度用完的模型會連敗進冷卻，自動跳下一隻，所以排序不必顧額度。
-# Claude 層（2026-10-25）：清冊 sub 列裡 dc_id 為 claude/* 的（bin/claude-exec 走 claude -p，Claude 訂閱額度、與主 session 共用）。
-# 只在 ORDER=sub（派os）時用，墊在冷宮之後、API 之前；default（派o）與 free（派of）都不派。不進 POOL_PAID：
-# go-sync 會把 upstream 沒有的移出訂閱層，且 default 順序也會用到訂閱層。PATH 上沒有 claude 就清空。
-_sub="$(cat_pool sub slash)"; POOL_CLAUDE=""; _ps=""
-for _m in $_sub; do case "$_m" in claude/*) POOL_CLAUDE="$POOL_CLAUDE${POOL_CLAUDE:+ }$_m" ;; *) _ps="$_ps${_ps:+ }$_m" ;; esac; done
-POOL_CLAUDE="${DCQ_POOL_CLAUDE-$POOL_CLAUDE}"; command -v claude >/dev/null || POOL_CLAUDE=""
+# CLI 訂閱層：只派os，冷宮之後、API 之前；codex → claude。
+# 不進 POOL_PAID，避免 default 使用及 go-sync 移除。覆寫仍用 DCQ_POOL_CLAUDE。
+_sub="$(cat_pool sub slash)"; POOL_CLAUDE=""; _pc=""; _ps=""
+for _m in $_sub; do case "$_m" in
+  codex/*) _pc="$_pc${_pc:+ }$_m" ;;
+  claude/*) POOL_CLAUDE="$POOL_CLAUDE${POOL_CLAUDE:+ }$_m" ;;
+  *) _ps="$_ps${_ps:+ }$_m" ;;
+esac; done
+POOL_CLAUDE="${DCQ_POOL_CLAUDE-${_pc}${_pc:+${POOL_CLAUDE:+ }}${POOL_CLAUDE}}"
+_pc=""
+for _m in $POOL_CLAUDE; do
+  case "$_m" in
+    codex/*) command -v "${CODEX_BIN:-codex}" >/dev/null || continue ;;
+    *) command -v claude >/dev/null || continue ;;
+  esac
+  _pc="$_pc${_pc:+ }$_m"
+done
+POOL_CLAUDE="$_pc"
 POOL_PAID="${DCQ_POOL_PAID-$_ps}"
 # 訂閱層名單同步：讀 oc-probe/bin/go-sync 每 7 天寫一次的 state（≤8 天才採用；2026-10-21 起週掃，原為每日 ≤48h）。upstream 沒有的移出；
 # first_seen 不是 base（＝同步上線後才出現）的非 -free 新模型接到尾巴。上線前就有、刻意沒收的不會被加回。
@@ -785,7 +797,7 @@ cmd_plan() {
     [ -z "$t" ] || echo "  · 兜底：$t"
     [ -z "$z" ] || echo "  · 冷宮（0 PASS）：$z"
     [ "$order" = sub ] || [ -z "$s" ] || echo "  · 訂閱（付費）：$s"
-    [ -z "$c" ] || echo "  · Claude（訂閱額度）：$c"
+    case "$c" in *codex/*) echo "  · CLI（訂閱額度）：$c" ;; ?*) echo "  · Claude（訂閱額度）：$c" ;; esac
     [ -z "$a" ] || echo "  · API（按量扣錢）：$a"
   done
   echo "順序 ${order}；併發 全域 ${JOBS}、每模型 ${MODEL_MAX}、provider ${PROV_MAX:-不限}"
@@ -1153,7 +1165,7 @@ run_job() {
   fi
   fp_pool="$(fp_part "$pool")"; pool="$(echo $ph $(oc_part "$pool"))"
   tail_pool="$(fit_pool "$POOL_TAIL")"; paid_pool="$(fit_pool "$POOL_PAID")"; api_pool="$(fit_pool "$POOL_API")"; cl_pool=""
-  # ORDER：default＝免費→懲罰→兜底→訂閱→API；free＝只用免費的層；sub＝訂閱先，用盡才回免費的層，再 Claude 層，API 墊底
+  # ORDER：default＝免費→懲罰→兜底→訂閱→API；free＝只用免費的層；sub＝訂閱先，用盡才回免費的層，再 CLI 訂閱層，API 墊底
   local order free_main=""
   order="$(sed -n 's/^ORDER=//p' "$jobfile")"
   case "$order" in
@@ -1231,7 +1243,7 @@ run_job() {
         fi
         if [ "$cl" = 0 ] && [ -n "$cl_pool" ]; then
           cl=1; paid=1; pool="$cl_pool"; tried=""; grep -q '^PAID=1' "$jobfile" || echo 'PAID=1' >> "$jobfile"
-          echo "dcq[$id] 訂閱與免費的層全用盡（${pick%% *}），fallback Claude 層（訂閱額度）：${cl_pool}" >&2; continue
+          echo "dcq[$id] 訂閱與免費的層全用盡（${pick%% *}），fallback CLI 訂閱層（訂閱額度）：${cl_pool}" >&2; continue
         fi
         if [ "$api" = 0 ] && [ -n "$api_pool" ]; then
           api=1; paid=1; pool="$api_pool"; tried=""; echo 'PAID=1' >> "$jobfile"
@@ -1727,7 +1739,7 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
   派o    default（預設）  opencode free → freepool → 懲罰層 → 兜底層 → 冷宮 → 訂閱層（opencode-go，扣 Go 額度）
                           → API 層（只有 DCQ_ALLOW_API=1 才接，按量扣錢）
   派of   free             只走免費的層（opencode free／freepool／懲罰／兜底／冷宮），全敗就失敗，不升訂閱
-  派os   sub              訂閱層先，用盡回 opencode free → freepool → …，再 Claude 層（claude -p），API 墊底
+  派os   sub              訂閱層先，用盡回 opencode free → freepool → …，再 CLI 訂閱層（codex → claude），API 墊底
   派deep （不經 dcq）      deep-run：OpenCode Go 訂閱的多步自主 agent，要沙箱外寫入／GH_TOKEN 時用
 
 ■ 免費分兩層，絕不混排（全部都由 opencode run 當外殼執行）
@@ -1837,7 +1849,7 @@ case "${1:-}" in
   plan)   shift; cmd_plan "$@" ;;
   status) shift; cmd_status "$@" ;;
   doctor) shift; cmd_doctor "$@" ;;
-  rank)   shift; rank_free "${MODELS_MANUAL:-$MODELS}" table "${1:-}"; echo "名單同步：${SYNC_NOTE:-無變動}"; echo "兜底層：$POOL_TAIL"; echo "訂閱層：$POOL_PAID"; echo "Claude 層（只派os）：${POOL_CLAUDE:-無}"; echo "API 層：${POOL_API:-（關，DCQ_ALLOW_API=1 才開）}"; echo "hard 不派：${EASY_ONLY:-無}"; echo "mid 不派：${EASY_STRICT:-無}"; echo "provider 上限：${PROV_MAX:-無}" ;;
+  rank)   shift; rank_free "${MODELS_MANUAL:-$MODELS}" table "${1:-}"; echo "名單同步：${SYNC_NOTE:-無變動}"; echo "兜底層：$POOL_TAIL"; echo "訂閱層：$POOL_PAID"; echo "CLI 訂閱層（只派os）：${POOL_CLAUDE:-無}"; echo "API 層：${POOL_API:-（關，DCQ_ALLOW_API=1 才開）}"; echo "hard 不派：${EASY_ONLY:-無}"; echo "mid 不派：${EASY_STRICT:-無}"; echo "provider 上限：${PROV_MAX:-無}" ;;
   rescan) RESYNC_MIN_S=0 zen_resync "每日清單掃" ;;
   sync-catalog) shift; SYNC_ADD_ZEN="$SYNC_ADD_ZEN" SYNC_ADD_SUB="$SYNC_ADD_SUB" SYNC_ADD_GOFREE="$SYNC_ADD_GOFREE" SYNC_RM="$SYNC_RM" \
                 python3 "$(dirname "$(readlink -f "$0")")/catalog-sync" "$CAT/models.tsv" "$@" ;;

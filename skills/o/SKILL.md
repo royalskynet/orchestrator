@@ -96,3 +96,5 @@ Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|m
 - 模型排名、各層名單 → `dcq rank`；清冊 `catalog/models.tsv`、併發上限 `catalog/providers.tsv`
 - 單張 `dc` 實驗、dc 環境變數、Zen／Go 前綴分辨 → [references/dc.md](references/dc.md)
 - Go HTTP lane、架構 → repo `README.md`
+
+派os 的 CLI 訂閱層：codex → claude。
