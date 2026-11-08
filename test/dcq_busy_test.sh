@@ -15,13 +15,20 @@ export TRACE="$T/trace" XB="$T/xb"; : > "$TRACE"
 cp /bin/sh "$XB/opencode"
 
 # tool*：opencode 有子程序 8s（工具在跑）；idle*：dc 自己 sleep 8s（沒有工具）。兩者都沒輸出、不改檔。
+# dcq add 會把工單快照成 $Q/.src/<epoch>-<pid>-<name>.task.md 再把快照交給 dc（11-09），
+# 所以案例名稱從工單內容的 `# <name>` 取，不從檔名取（檔名已不是原案例名）。
 cat > "$T/bin/dc" <<'EOF'
 #!/usr/bin/env bash
-n="$(basename "$1" .md)"
+busy_task_name() { sed -n 's/^# //p' "$1" | head -n 1; }
+n="$(busy_task_name "$1")"
 echo "IN $n $DC_FREE_MODEL" >> "$TRACE"
+case "$n" in
+  tool1|idle1) ;;
+  *) echo "dc: 不明工單名稱 '$n'（$1），只認 tool1／idle1" >&2; exit 2 ;;
+esac
 case "$n:$DC_FREE_MODEL" in
-  tool*:m1) "$XB/opencode" -c 'sleep 8; :' ;;
-  idle*:m1) sleep 8 ;;
+  tool1:m1) "$XB/opencode" -c 'sleep 8; :' ;;
+  idle1:m1) sleep 8 ;;
 esac
 exit 0
 EOF
