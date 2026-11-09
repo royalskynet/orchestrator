@@ -50,7 +50,10 @@ id4="$("$REPO/bin/dcq" add --src="$id1" "$T/a.md" "$T/wd" easy 2>/dev/null)"
 has "--src= 寫法" "$(cat "$DCQ_HOME"/pending/"$id4".job 2>/dev/null)" "SRC=$id1"
 
 id5="$("$REPO/bin/dcq" add "$T/a.md" "$T/wd" easy 2>/dev/null)"
-chk "舊路徑 task 不複製" "$(sed -n 's/^TASK=//p' "$DCQ_HOME"/pending/"$id5".job)" "$T/a.md"
+# B2（WO-F）：入列即快照，沒帶 --src 也存 .src/<id>/<原檔名>，ORIG_TASK= 記原路徑
+chk "快照 task 指向 .src" "$(sed -n 's/^TASK=//p' "$DCQ_HOME"/pending/"$id5".job)" "$DCQ_HOME/.src/$id5/a.md"
+chk "ORIG_TASK 記原路徑" "$(sed -n 's/^ORIG_TASK=//p' "$DCQ_HOME"/pending/"$id5".job)" "$T/a.md"
+chk "快照內容＝原檔" "$(cat "$DCQ_HOME/.src/$id5/a.md")" "$(cat "$T/a.md")"
 hasnt "舊路徑無 SRC" "$(cat "$DCQ_HOME"/pending/"$id5".job)" "SRC="
 
 [ "$fail" = 0 ] && echo "PASS dcq_src" || echo "FAIL dcq_src"

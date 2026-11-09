@@ -1,5 +1,25 @@
 # DEVLOG
 
+## 2026-11-09：WO-F4
+
+- worktree 恢復預設改寫主 checkout 絕對路徑到 `.src/<id>/wt/<原檔名>`，`TASK0=` 保留原快照；移除舊開關及 `.wt` 工單副本。pending 取消清快照；孤兒測試保留被殺時快照並驗證工單內容，新增兩個突變。
+
+
+## 2026-11-09：WO-F2，codex 語意驗收的五個缺口
+
+- **舊單補快照失敗擋下來**：`dcq_ensure_snapshot` 失敗不再用可變原路徑跑，這張單直接落 failed（`LAST_RC=2`），log 寫原因，不派模型。
+- **hard＋冷卻不逃出指定清單**：帶 `MODELS=` 的單不進 best-of-N（候選取自 runner 的 `MODELS_hard`，會逃出清單）。取舍＝直接不進，而不是從清單選候選：指定模型就是要單一，N 隻同清單沒意義。
+- **快照清理**：done／failed 結案、`add` 發布失敗、`clear`、`wt_gc` 孤兒兜底，都收 `$Q/.src/<id>/`。
+- **`.wt` 不重複快照**：`wt_setup` 不再另複製 `<id>.task.md`（快照路徑與 worktree 無關），改寫副本改存 `.src/<id>/wt/<原檔名>`；`TASK0=` 保留原快照。
+- `test/dcq_worktree_test.sh` 假 dc 改從工單內容 `# <name>` 認單（檔名不再帶 `-a` 後綴），WO-F4 補回預設路徑改寫與原快照不變驗證。
+- `test/dcq_models_job_test.sh` 假 dc 的失敗清單擴到 f／g／o*／cool，補 default／free 不換層與 hard 冷卻案例。
+
+## 2026-11-09：入列即快照（B2）、#23 補完
+
+- **B2**：11-09 00:06 `wo-dcq-pin-warn` rc=2 Parse error，根因是 job 檔只存原工單路徑，派工後原檔被改寫。`dcq add` 改成一律寫 `$DCQ_HOME/.src/<id>/<原檔名>`（tmp→非空→mv），`TASK=` 指快照、`ORIG_TASK=` 記原路徑；舊單重派時補快照。保留原檔名，靠檔名認單的下游不受影響。
+- **#23 補完**：`ORDER=sub` 分支會把指定模型的池換成訂閱池；改成 ORDER 之後再鎖回清單、各層池全清，`PAID=1` 移到鎖定之後才寫。
+- 新增 `test/dcq_snapshot_test.sh`、`test/dcq_test_safety_test.sh`、`test/wo_e_acceptance_test.sh`（六次並行 dcq_tier 逐 pid wait＋四個突變）。
+
 ## 2026-11-08：dcq runner 隔離（#22）、逐單指定模型（#23）、dcq_tier 偶發紅（fixindex 11844）
 
 - **#22**：`test/env.sh` 統一 `DCQ_AUTOSTART=0 DCQ_TMUX=dcqtest$$`，測試 runner 不再佔正式 socket `-L dcq`；`dcq_sock()` 讓沒設 `DCQ_TMUX` 時只有正式佇列 `~/.dcq` 用 `dcq`，其他佇列走 `dcq-<cksum>`。`dcq doctor`／`--fix` 抓並收掉指向別處的 runner（混了正式 runner 只報不殺）。

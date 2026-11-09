@@ -692,6 +692,40 @@ pref_hits() {
 }
 pref_ok() { case "$1" in *[!A-Za-z0-9._/:-]*) return 1 ;; esac; }
 # 從 $2 這個池挑下一隻：依序跳過「本單試過的」「冷卻中的」「槽滿的」。印：
+# B2：入列即快照。流程＝寫 <快照>.tmp → 檢查非空 → mv 成正式名；成功印快照路徑。
+# $3（非空）是 --src 的前置段，接在原工單前面。為什麼：派工後原檔常被改寫（11-09 00:06 parse error）。
+# 快照放 $Q/.src/<id>/<原檔名>：保留原檔名，靠檔名認單的下游（log、假 dc）不受影響
+dcq_snap_path() { printf '%s/.src/%s/%s' "$Q" "$1" "$(basename "$2")"; }
+dcq_snapshot() {
+  local f; f="$(dcq_snap_path "$1" "$2")"
+  local tmp="$f.tmp"
+  mkdir -p "$Q/.src/$1" || return 1
+  { [ -z "${3:-}" ] || printf '%s\n' "$3"; cat "$2"; } > "$tmp" || { rm -f "$tmp"; return 1; }
+  [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }
+  echo "$f"
+}
+# 舊單（快照上線前入列的）沒有 .src 快照：原地補一份，之後重派也讀快照
+dcq_ensure_snapshot() {
+  local id="$1" task="$2" f; f="$(dcq_snap_path "$1" "$2")"
+  [ -s "$f" ] && return 0
+  [ -f "$task" ] || return 1
+  dcq_snapshot "$id" "$task" >/dev/null
+}
+# 舊單（快照上線前入列的）TASK= 指可變原檔：先補快照並把 job 檔的 TASK= 改成快照路徑。
+# 已經指 .src/ 的直接回 0；原檔不存在／寫入失敗回 1（呼叫端結案到 failed，不派模型）
+prep_task() {
+  local job="$1" id="$2" t
+  t="$(sed -n 's/^TASK=//p' "$job")"
+  case "$t" in "$Q/.src/"*) return 0 ;; esac
+  if dcq_ensure_snapshot "$id" "$t"; then
+    t="$(dcq_snap_path "$id" "$t")"
+    { grep -v '^TASK=' "$job"; echo "TASK=$t"; } > "$job.tmp" && mv "$job.tmp" "$job"
+  else
+    echo "dcq[$id] 舊單補快照失敗（原檔不存在或寫入失敗）：${t}，不跑" >&2
+    return 1
+  fi
+}
 #   PICK <model> <slot>
 #   BUSY        有沒試過的但槽滿 —— 只是忙，等它讓出來
 #   COOL <秒>   沒試過的全在冷卻 —— 這個池現在是掛的
@@ -909,29 +943,31 @@ cmd_add() {
 只補這次要改的部分，不要重做上張單已完成的項。"
   fi
   local id="$(date +%s)-$$-$(basename "${task%.md}")"
-  if [ -n "$src" ]; then
-    local tcopy="$Q/.src/$id.task.md"; mkdir -p "$Q/.src"
-    { printf '%s\n' "$srcctx"; cat "$task"; } > "$tcopy"
-    task="$tcopy"
-  fi
-  printf 'TASK=%s\nCWD=%s\nTIER=%s\nORDER=%s\n' "$task" "$cwd" "$tier" "$order" > "$Q/pending/$id.job"
-  [ -n "$src" ] && echo "SRC=$src" >> "$Q/pending/$id.job"
-  [ -n "${DCQ_SPIN_S:-}" ] && echo "SPIN=$DCQ_SPIN_S" >> "$Q/pending/$id.job"   # 逐張關防空轉（唯讀工單帶 0）
+  local orig_task="$task"
+  task="$(dcq_snapshot "$id" "$task" "$srcctx")" || { rm -rf "$Q/.src/$id"; die "dcq add：工單快照失敗：$orig_task"; }
+  mkdir -p "$Q/pending" || { rm -rf "$Q/.src/$id"; die "dcq add：建立 pending 失敗"; }
+  local jtmp="$Q/pending/.$id.job.tmp"
+  printf 'TASK=%s\nORIG_TASK=%s\nCWD=%s\nTIER=%s\nORDER=%s\n' "$task" "$orig_task" "$cwd" "$tier" "$order" > "$jtmp" \
+    || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：寫 job 檔失敗"; }
+  [ -n "$src" ] && { echo "SRC=$src" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
+  [ -n "${DCQ_SPIN_S:-}" ] && { echo "SPIN=$DCQ_SPIN_S" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }   # 逐張關防空轉（唯讀工單帶 0）
   # 逐張關 worktree（2026-11-07）：DCQ_WORKTREE=0 入列時記 NOWT=1。為什麼：產出寫在被 .gitignore 擋掉的
   # 路徑時，worktree 裡寫完、merge 回主 repo 不會帶回（worktree 一刪產出就沒了），這類工單要逐張走序列。
-  [ "${DCQ_WORKTREE:-1}" = 0 ] && echo "NOWT=1" >> "$Q/pending/$id.job"
+  [ "${DCQ_WORKTREE:-1}" = 0 ] && { echo "NOWT=1" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
   # 逐張預算（研究類長工單用，2026-10-21）：JOBMAX＝這張的總時限；SAT＝連續幾次嘗試 cwd 沒有新產出就停
-  [ -n "${DCQ_JOB_MAX:-}" ] && echo "JOBMAX=$DCQ_JOB_MAX" >> "$Q/pending/$id.job"
-  [ -n "${DCQ_SAT_N:-}" ] && echo "SAT=$DCQ_SAT_N" >> "$Q/pending/$id.job"
+  [ -n "${DCQ_JOB_MAX:-}" ] && { echo "JOBMAX=$DCQ_JOB_MAX" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
+  [ -n "${DCQ_SAT_N:-}" ] && { echo "SAT=$DCQ_SAT_N" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
   if [ -n "${DCQ_PREFER:-}" ]; then
-    echo "PREFER=$DCQ_PREFER" >> "$Q/pending/$id.job"
+    echo "PREFER=$DCQ_PREFER" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }
     [ -n "$(pref_hits "$DCQ_PREFER" "$MODELS_easy $MODELS_mid $MODELS_hard $PEN_easy $PEN_mid $PEN_hard $ZERO_easy $ZERO_mid $ZERO_hard")" ] \
       || echo "dcq: ⚠ 優先「${DCQ_PREFER}」在免費層找不到相符模型，照原順序" >&2
   fi
   # #23 逐單指定模型：照 PREFER 寫法記進 job 檔，runner 跑這張只用這份清單（呼叫端的環境不帶到 runner）
   if [ -n "${DCQ_MODELS:-}" ]; then
-    echo "MODELS=$DCQ_MODELS" >> "$Q/pending/$id.job"
+    echo "MODELS=$DCQ_MODELS" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }
   fi
+  # B2：pending 只在整份寫好、快照就緒後才出現（可見＝已入列），runner 不會讀到寫一半的檔
+  { [ -s "$task" ] && mv "$jtmp" "$Q/pending/$id.job"; } || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：入列失敗（pending 未寫入）"; }
   echo "dcq: 難度 ${tier}，順序 ${order}${DCQ_PREFER:+，優先 $DCQ_PREFER}${DCQ_MODELS:+，模型 $DCQ_MODELS}" >&2
   if ! runner_alive; then
     if [ "${DCQ_AUTOSTART:-1}" = "1" ] && command -v tmux >/dev/null 2>&1; then
@@ -1176,6 +1212,14 @@ run_job() {
   local pool fp_pool fp=0 paid=0 pen=0 tail=0 zero=0 sub=0 cl=0 api=0 round=1 left vr=0 pslot pen_pool tail_pool zero_pool paid_pool cl_pool api_pool noretry="" bon=0 bm ran=0
   id="$(basename "$jobfile" .job)"
   task="$(sed -n 's/^TASK=//p' "$jobfile")"
+  # B2：重派（孤兒回收／rerun）也讀快照；沒有快照的舊單先補。補快照失敗＝這張單直接失敗，不派模型
+  if ! prep_task "$jobfile" "$id"; then
+    printf 'LAST_RC=2\nTRIED=\nVERIFY_RUNS=0\n' >> "$jobfile"
+    mv "$jobfile" "$Q/failed/$id.job"
+    rm -rf "$Q/.src/$id"
+    return 1
+  fi
+  task="$(sed -n 's/^TASK=//p' "$jobfile")"
   cwd="$(sed -n 's/^CWD=//p' "$jobfile")"
   # 2026-10-21 前置檢查憑證：同一張工單的每次嘗試共用一個目錄。
   # 為什麼：dc 每派一次工就重跑整套前置檢查（deep-lint ＋ do-nothing 對照，上限 120s），
@@ -1217,9 +1261,17 @@ run_job() {
   case "$order" in
     free|"") paid_pool="" api_pool="" ;;
     sub) cl_pool="$(fit_pool "$POOL_CLAUDE")"
-      [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1; echo 'PAID=1' >> "$jobfile"; } ;;
+      [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1; } ;;
   esac
-  [ -n "$jm" ] && { free_main=""; paid_pool=""; api_pool=""; cl_pool=""; echo "dcq[$id] 逐單指定模型：${pool}" >&2; }
+  # #23 補完：逐單指定模型不換層。ORDER 分支（sub）會把 pool 換成 paid_pool，這裡再鎖回清單本身；
+  # 各層池與免費主池全清空（單獨一行，驗收突變靠這行），指定模型全失敗就讓這張單失敗。
+  if [ -n "$jm" ]; then
+    pool="$(fit_pool "$jm")"; pool="$(echo $(oc_part "$pool") $(fp_part "$pool"))"  # 清單內仍 opencode free 先、freepool 後
+    pen_pool="" zero_pool="" tail_pool="" fp_pool="" paid_pool="" api_pool="" cl_pool="" free_main=""
+    sub=0 paid=0
+    echo "dcq[$id] 逐單指定模型（不換層）：${pool}" >&2
+  fi
+  [ "$sub" = 1 ] && echo 'PAID=1' >> "$jobfile"
   t0=$(now)
 
   while true; do
@@ -1228,7 +1280,7 @@ run_job() {
     [ -e "$Q/.cancel/$id" ] && { rc=130; break; }
     if [ $(( $(now) - t0 )) -ge "$JOB_MAX" ]; then
       if jobmax_verify "$task" "$cwd" "$DC_PREFLIGHT_DIR"; then
-        mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR"
+        mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR" "$Q/.src/$id"
         echo "dcq[$id] PASS（總時限 ${JOB_MAX}s 到，但驗收通過）model=$model" >&2; return 0
       fi
       rc=124; echo "dcq[$id] 超過總時限 ${JOB_MAX}s" >&2; break
@@ -1252,10 +1304,11 @@ run_job() {
           echo "dcq[$id] 免費層第 ${round} 輪重試" >&2; continue
         fi
         # hard 單、主免費層強模型全冷卻 → best-of-N 同派便宜模型（每張一次），全敗才照下面的階梯
-        if [ "$bon" = 0 ] && [ "$paid" = 0 ] && [ "$JOB_TIER" = hard ] && [ "${pick%% *}" = COOL ] && [ "$BON_N" -ge 2 ]; then
+        # 逐單指定模型的單不進 best-of-N：候選是 runner 的 MODELS_hard，會逃出指定清單
+        if [ "$bon" = 0 ] && [ "$paid" = 0 ] && [ -z "$jm" ] && [ "$JOB_TIER" = hard ] && [ "${pick%% *}" = COOL ] && [ "$BON_N" -ge 2 ]; then
           bon=1
           if bm="$(bon_run "$id" "$task" "$cwd" "$t0" "$tried" "$jobfile")"; then
-            mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR"
+            mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR" "$Q/.src/$id"
             echo "dcq[$id] PASS（best-of-N）model=$bm" >&2; return 0
           fi
           [ -e "$Q/.cancel/$id" ] && { rc=130; break; }
@@ -1332,11 +1385,11 @@ run_job() {
          fi
          mv "$jobfile" "$Q/done/$id.job"
          echo "dcq[$id] PASS model=$model" >&2
-         rm -rf "$DC_PREFLIGHT_DIR"   # 前置檢查憑證只對這張工單有效，結案就收掉
+         rm -rf "$DC_PREFLIGHT_DIR" "$Q/.src/$id"   # 前置檢查憑證與快照只對這張工單有效，結案就收掉
          return 0 ;;
       # 總時限是工單的問題不是模型的：不罰模型、不再換
       jobmax:*) if jobmax_verify "$task" "$cwd" "$DC_PREFLIGHT_DIR"; then
-           mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR"
+           mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR" "$Q/.src/$id"
            echo "dcq[$id] PASS（總時限 ${JOB_MAX}s 到，但驗收通過）model=$model" >&2; return 0
          fi
          rc=124; break ;;
@@ -1386,7 +1439,7 @@ run_job() {
     echo "dcq[$id] FAIL rc=${rc}（試過 $n 個模型：${tried# }）" >&2
   fi
   mv "$jobfile" "$Q/failed/$id.job"
-  rm -rf "$DC_PREFLIGHT_DIR"   # 前置檢查憑證只對這張工單有效，結案就收掉（FAIL／取消都走這裡）
+  rm -rf "$DC_PREFLIGHT_DIR" "$Q/.src/$id"   # 前置檢查憑證與快照只對這張工單有效，結案就收掉（FAIL／取消都走這裡）
   return 1
 }
 
@@ -1414,16 +1467,18 @@ wt_drop() {
   git -C "$main" worktree remove --force "$wt" >/dev/null 2>&1 || rm -rf "$wt"
   git -C "$main" worktree prune >/dev/null 2>&1
   [ "${4:-}" = keep ] || git -C "$main" branch -D "dcq/$id" >/dev/null 2>&1
-  rm -f "$Q/.wt/$id.task.md"
 }
-# 把 job 切到 worktree：TASK=／CWD= 改成 worktree 版，原值留在 TASK0=／CWD0=，WT= 標記。失敗回 1（呼叫端走序列）
+# 把 job 切到 worktree：CWD= 改成 worktree 版，原值留在 CWD0=，WT= 標記。TASK= 已是 $Q/.src/<id>/<原檔名>
+# TASK0= 保留原快照；TASK= 指向 .src/<id>/wt/<原檔名>，預設改寫 checkout 路徑。失敗回 1（呼叫端走序列）
 wt_setup() {
-  local job="$1" id="$2" cwd="$3" wt="$Q/.wt/$2" task tcopy
-  task="$(sed -n 's/^TASK=//p' "$job")"; tcopy="$Q/.wt/$id.task.md"
+  local job="$1" id="$2" cwd="$3" wt="$Q/.wt/$2" task t0 tcopy
+  task="$(sed -n 's/^TASK=//p' "$job")"; t0="$task"; tcopy="$Q/.src/$id/wt/$(basename "$task")"
   git -C "$cwd" worktree add -q "$wt" -b "dcq/$id" >/dev/null 2>&1 || return 1
   wt="$(cd "$wt" && pwd -P)"
+  mkdir -p "$Q/.src/$id/wt" || { wt_drop "$cwd" "$wt" "$id"; return 1; }
   sed "s#$(re_esc "$cwd")#$(rp_esc "$wt")#g" "$task" > "$tcopy" || { wt_drop "$cwd" "$wt" "$id"; return 1; }
-  { grep -v '^TASK=\|^CWD=' "$job"; printf 'TASK=%s\nCWD=%s\nTASK0=%s\nCWD0=%s\nWT=%s\n' "$tcopy" "$wt" "$task" "$cwd" "$wt"; } > "$job.tmp" \
+  task="$tcopy"
+  { grep -v '^TASK=\|^CWD=' "$job"; printf 'TASK=%s\nCWD=%s\nTASK0=%s\nCWD0=%s\nWT=%s\n' "$task" "$wt" "$t0" "$cwd" "$wt"; } > "$job.tmp" \
     && mv "$job.tmp" "$job"
 }
 # 被殺的 runner 留下的 worktree job 搬回 pending 前還原成原工單（worktree 本身由 wt_gc 收掉，從頭重跑）
@@ -1435,7 +1490,15 @@ wt_restore_job() {
 }
 # 孤兒 worktree：沒有 running job 指到它的一律收掉（分支一起刪）
 wt_gc() {
-  local d id common main t
+  local d id common main
+  # 孤兒快照：沒有 pending／running job 指到它的一律收掉（結案時已刪，這裡兜底）
+  for d in "$Q"/.src/*/; do
+    [ -d "$d" ] || continue; id="$(basename "$d")"
+    [ -e "$Q/pending/$id.job" ] || [ -e "$Q/running/$id.job" ] || [ -e "$Q/pending/.$id.job.tmp" ] && continue
+    # ponytail: 發布前最多保護 10 分鐘；更長的 add 需改用明確的存活鎖。
+    [ "$(( $(now) - $(mtime "$d") ))" -lt 600 ] && continue
+    rm -rf "$Q/.src/$id"
+  done
   for d in "$Q"/.wt/*/; do
     [ -d "$d" ] || continue; d="${d%/}"; id="$(basename "$d")"
     grep -qs "^WT=$d\$" "$Q"/running/*.job 2>/dev/null && continue
@@ -1443,7 +1506,6 @@ wt_gc() {
     [ -n "$common" ] && main="$(cd "$d" && cd "$common" && pwd -P)" && main="${main%/.git}" || main=""
     if [ -n "$main" ] && [ -d "$main/.git" ]; then wt_drop "$main" "$d" "$id"; else rm -rf "$d"; fi
   done
-  for t in "$Q"/.wt/*.task.md; do [ -e "$t" ] && [ ! -d "${t%.task.md}" ] && rm -f "$t"; done
   # best-of-N 候選（.bon/<id>.<k>）：本張已不在 running 就收掉
   for d in "$Q"/.bon/*/; do
     [ -d "$d" ] || continue; d="${d%/}"; id="$(basename "$d")"; id="${id%.*}"
@@ -1499,6 +1561,14 @@ claim_one() {
     id="$(basename "$f" .job)"
     mv "$f" "$Q/running/$id.job" 2>/dev/null || continue
     cwd="$(sed -n 's/^CWD=//p' "$Q/running/$id.job")"
+    # 舊單（快照上線前入列）先補快照，再進 wt_setup：不然 TASK0= 記的是可變原檔，被殺後還原又指回它。
+    # 補失敗同 run_job 的「快照失敗」路徑：直接結案到 failed，不派模型、清 .src
+    if ! prep_task "$Q/running/$id.job" "$id"; then
+      printf 'LAST_RC=2\nTRIED=\nVERIFY_RUNS=0\n' >> "$Q/running/$id.job"
+      mv "$Q/running/$id.job" "$Q/failed/$id.job"
+      rm -rf "$Q/.src/$id"
+      continue
+    fi
     # 乾淨的 git cwd → 切到自己的 worktree，鎖的是 worktree 路徑（必唯一）；否則照舊鎖 cwd 序列
     # 逐張關 worktree：job 檔有 NOWT=1（入列時 DCQ_WORKTREE=0 記下）就照序列，不切 worktree
     why="$(sed -n 's/^NOWT=//p' "$Q/running/$id.job" | head -1)"
@@ -1614,6 +1684,7 @@ cmd_cancel() {
     printf 'LAST_RC=130\nTRIED=0\nCANCELLED=1\n' >> "$Q/pending/$id.job"
     if mv "$Q/pending/$id.job" "$Q/failed/$id.job" 2>/dev/null; then
       rm -f "$Q/.cancel/$id"
+      rm -rf "$Q/.src/$id"
       echo "dcq: 已取消 ${id}（還沒開跑，移到 failed）"
     else
       echo "dcq: 已標記取消 ${id}（剛好被 worker 搶走，worker 收到標記就會停）"
@@ -1773,7 +1844,7 @@ cmd_wait() {
   [ ${#ids[@]} -eq 0 ] && { cmd_status | sed -n 1,4p; [ -n "$(ls "$Q"/failed/*.job 2>/dev/null)" ] && rc=1; }
   return $rc
 }
-cmd_clear() { rm -f "$Q"/{pending,running,done,failed}/*.job "$Q"/logs/*.out "$Q"/running/*.pid 2>/dev/null; wt_gc; rm -rf "$Q"/.cwdlock/* 2>/dev/null; rm -rf "$Q"/.health/* "$Q"/.inuse/* "$Q"/.cancel/* "$Q"/.preflight/* 2>/dev/null; echo "dcq: 已清空"; }
+cmd_clear() { rm -f "$Q"/{pending,running,done,failed}/*.job "$Q"/logs/*.out "$Q"/running/*.pid 2>/dev/null; wt_gc; rm -rf "$Q"/.cwdlock/* 2>/dev/null; rm -rf "$Q"/.health/* "$Q"/.inuse/* "$Q"/.cancel/* "$Q"/.preflight/* "$Q"/.src 2>/dev/null; echo "dcq: 已清空"; }
 
 # dcq help：觀念總覽，給每次從零開始的 agent 與人看，接著印 usage。只寫機制不寫模型名——名單看 dcq plan／rank。
 cmd_help() {

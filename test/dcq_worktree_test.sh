@@ -2,7 +2,7 @@
 # dcq worktree 模式：同一個乾淨 git cwd 的多張工單各自在 git worktree 裡跑，不再序列（2026-10-22 使用者定「要併發」）。
 # 假 dc 照工單裡的 WRITE= 絕對路徑寫檔並 sleep；不打上游。斷言：
 #   1) 三張同 cwd 工單同時在跑（IN 全部出現後才有第一個 OUT），cwd 都在 $Q/.wt/ 下
-#   2) 工單裡的絕對路徑被改寫到 worktree（10-08 教訓：模型照絕對路徑寫回主 checkout）
+#   2) TASK 指向 .src/<id>/wt/ 同名副本，TASK0 原快照保持原樣
 #   3) 不衝突的兩張 merge 回主 checkout（檔案在 main、MERGED=1）；worktree 與分支收掉
 #   4) 同檔衝突的那張：MERGE=conflict、main 不受影響、分支保留
 #   5) cwd 髒、或 DCQ_WORKTREE=0 → 照舊直接在 cwd 跑（序列路徑）
@@ -17,13 +17,36 @@ export DC_FREECHECK=off DC_NEGCTL=0 DCQ_POLL_S=1
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"
 export DCQ_FREE_ROUNDS=1 DCQ_POOL_PAID="" DCQ_POOL_TAIL="" DCQ_ORDER=default
 export DCQ_PROV_MAX="zen=3"   # 裸模型名歸 zen，providers.tsv 預設上限 2 會卡第三張；這裡測的是 worktree 併發，不是 provider 上限
+export EXPECTED_REPO="$T/repo"
 export TRACE="$T/trace"; : > "$TRACE"
+# 假 dc 原樣讀入絕對 WRITE 路徑。
 
 # 假 dc：讀工單的 WRITE=<絕對路徑>（內容＝CONTENT=），寫檔，sleep 3 讓三張重疊
+# TASK= 是改寫後的同名副本，TASK0= 保留 add 時原快照：
+# 假 dc 靠工單內容 `# <name>` 認單，不靠檔名。
 cat > "$T/bin/dc" <<'EOF'
 #!/usr/bin/env bash
-task="$1"; cwd="$2"; n="$(basename "$task" .md)"
-w="$(sed -n 's/^WRITE=//p' "$task")"; c="$(sed -n 's/^CONTENT=//p' "$task")"
+task="$1"; cwd="$2"; n="$(sed -n 's/^# //p' "$task" | head -n 1)"
+# 原樣讀取改寫副本的 WRITE，不替 runner 改寫路徑。
+w="$(sed -n 's#^WRITE=##p' "$task")"; c="$(sed -n 's/^CONTENT=//p' "$task")"
+case "$cwd" in
+  "$DCQ_HOME/.wt/"*)
+    id="$(basename "$cwd")"
+    [ "$task" = "$DCQ_HOME/.src/$id/wt/$n.md" ] || exit 2
+    t0="$(sed -n 's/^TASK0=//p' "$DCQ_HOME/running/$id.job")"
+    [ "$t0" = "$DCQ_HOME/.src/$id/$n.md" ] || exit 2
+    if [ -n "$w" ]; then
+      grep -Fqx "ORIGINAL=$EXPECTED_REPO" "$t0" || exit 2
+    file="$n"; [ "$n" != c ] || file=a
+    grep -Fqx "WRITE=$EXPECTED_REPO/out-$file.txt" "$t0" || exit 2
+    [ "$(sed -n 's/^ORIGINAL=//p' "$task")" = "$cwd" ] || exit 2
+    fi
+    echo "SNAP $n $t0" >> "$TRACE"
+    ;;
+esac
+[ -z "$w" ] || case "$w" in "$cwd"/*) ;; *) exit 2 ;; esac
+echo "PATH $n $w" >> "$TRACE"
+cd "$cwd" || exit 2
 echo "IN $n $cwd $w $(date +%s)" >> "$TRACE"
 say="$(sed -n 's/^SAYS=//p' "$task")"; [ -n "$say" ] && echo "$say" >&2
 [ -n "$w" ] && printf '%s\n' "$c" > "$w"
@@ -37,9 +60,9 @@ for g in deep-lint wo-verify; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$g"; chm
 mkrepo() { git init -q "$1"; git -C "$1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init; }
 mkrepo "$T/repo"
 # a、b 寫不同檔；c 跟 a 寫同一個檔（add/add 衝突）
-printf '# a\nWRITE=%s/out-a.txt\nCONTENT=a\n' "$T/repo" > "$T/a.md"
-printf '# b\nWRITE=%s/out-b.txt\nCONTENT=b\n' "$T/repo" > "$T/b.md"
-printf '# c\nWRITE=%s/out-a.txt\nCONTENT=c\n' "$T/repo" > "$T/c.md"
+printf '# a\nWRITE=%s/out-a.txt\nORIGINAL=%s\nCONTENT=a\n' "$T/repo" "$T/repo" > "$T/a.md"
+printf '# b\nWRITE=%s/out-b.txt\nORIGINAL=%s\nCONTENT=b\n' "$T/repo" "$T/repo" > "$T/b.md"
+printf '# c\nWRITE=%s/out-a.txt\nORIGINAL=%s\nCONTENT=c\n' "$T/repo" "$T/repo" > "$T/c.md"
 for n in a b c; do "$REPO/bin/dcq" add "$T/$n.md" "$T/repo" >/dev/null 2>&1 || echo "add failed: $n"; done
 DCQ_MODELS="m1" DCQ_MODEL_MAX=3 "$REPO/bin/dcq" run -j 3 >"$T/run.out" 2>&1
 
@@ -50,8 +73,12 @@ chk() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1: got '$2' wa
 in3="$(grep '^IN ' "$TRACE" | sed -n 3p | awk '{print $NF}')"; out1="$(grep '^OUT ' "$TRACE" | sed -n 1p | awk '{print $NF}')"
 chk "三張同 cwd 工單重疊執行" "$([ -n "$in3" ] && [ -n "$out1" ] && [ "$in3" -le "$out1" ] && echo yes)" "yes"
 chk "三張都在 .wt/ 下的 worktree 跑" "$(grep '^IN ' "$TRACE" | awk -v q="$DCQ_HOME/.wt/" 'index($3,q)==1' | wc -l | tr -d ' ')" "3"
-# 2) 絕對路徑改寫
-chk "工單 WRITE 絕對路徑改寫到 worktree" "$(grep '^IN ' "$TRACE" | awk -v q="$DCQ_HOME/.wt/" 'index($4,q)==1' | wc -l | tr -d ' ')" "3"
+# 2) 假 dc 原樣使用改寫後絕對 WRITE；TASK0 保留主 checkout 路徑。
+chk "工單有到 worktree 裡的 dc" "$(grep '^IN ' "$TRACE" | grep -c '^IN [abc] ')" "3"
+chk "TASK0 原快照保持主 checkout 路徑" "$(grep -c '^SNAP [abc] ' "$TRACE")" "3"
+chk "WRITE 絕對路徑指向 worktree" "$(grep '^IN [abc] ' "$TRACE" | awk 'index($4,$3 "/out-")==1' | wc -l | tr -d ' ')" "3"
+# 2b) 改寫副本放 .src/<id>/wt/，沒有 .wt/<id>.task.md 殘留
+chk "worktree 不留 .wt/*.task.md" "$(ls "$DCQ_HOME"/.wt/*.task.md 2>/dev/null | wc -l | tr -d ' ')" "0"
 # 3) merge 回主 checkout
 chk "b 的產物 merge 進 main" "$(cat "$T/repo/out-b.txt" 2>/dev/null)" "b"
 chk "out-a.txt 進 main（a 或 c 其一）" "$([ -f "$T/repo/out-a.txt" ] && echo yes)" "yes"
