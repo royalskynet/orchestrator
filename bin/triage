@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # triage — 判工單難度，印 easy／mid／hard。dcq add 入列時呼叫一次，同一張工單中途不換。
 # 不自造：直接用 jev-gate 的 triage()，JEV_PROVIDER=laya 只走本機 ONNX，零 token、約 2～3 秒。
+# TRIAGE_CONFIG（選用）：JSON，覆寫 jev-gate 的判定門檻（例：{"hard_score_at":2.5}）；沒設照預設。
 # fail-open：jev-gate 不在、node 失敗、逾時、Laya 沒把握（tier=null）一律印 mid，不擋入列。
 set -u
 task="${1:-}"
@@ -13,7 +14,8 @@ t=$(cd "$J" && JEV_PROVIDER=laya $to node --input-type=module -e '
 import { readFileSync } from "node:fs";
 const { liveTransport } = await import("./agent-glue/src/live.js");
 const { triage } = await import("./agent-glue/src/triage.js");
-const d = await triage({ text: readFileSync(process.argv[1], "utf8"), contextChars: 0, skills: [] },
+const config = process.env.TRIAGE_CONFIG ? JSON.parse(process.env.TRIAGE_CONFIG) : undefined;
+const d = await triage({ text: readFileSync(process.argv[1], "utf8"), contextChars: 0, skills: [], config },
   { transport: await liveTransport({ triage: true }) });
 process.stdout.write(String(d.tier ?? ""));' "$task" 2>/dev/null)
 case "$t" in cheap) echo easy ;; hard) echo hard ;; *) echo mid ;; esac

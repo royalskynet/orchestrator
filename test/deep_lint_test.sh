@@ -105,7 +105,7 @@ case "$out" in 'LINT OK') echo 'ok: 有預期不誤報';; *) echo "FAIL: 有預�
 out=$("$HERE/deep-lint" "$tmp/one-long.md" 2>&1)
 case "$out" in *'tasks=1, formula=40+20*(tasks-1)'*) echo 'ok: 單任務超限警告';; *) echo "FAIL: 單任務超限未警告 — $out"; rc=1;; esac
 out=$("$HERE/deep-lint" "$tmp/three-tasks.md" 2>&1)
-case "$out" in 'LINT OK') echo 'ok: 三任務合理長度不警告'; echo 'ok: 多任務合理長度不警告';; *) echo "FAIL: 三任務長度誤報 — $out"; rc=1;; esac
+case "$out" in *'lines (>'*|*'LINT FAIL'*) echo "FAIL: 三任務長度誤報 — $out"; rc=1;; *'拆單分數 1/4'*) echo 'ok: 三任務合理長度不警告長度、只記拆單 1 分';; *) echo "FAIL: 三任務未記拆單 1 分 — $out"; rc=1;; esac
 
 sed 's/^### 三$/### 三\n### 四/' "$tmp/three-tasks.md" > "$tmp/four-tasks.md"
 printf '\n```bash\n### fence 內不算\n```\n' >> "$tmp/three-tasks.md"
@@ -472,5 +472,21 @@ for l in "git log --format=%s -20 | grep -q x" "git diff --stat | grep -q x" "gi
   out=$("$HERE/deep-lint" "$tmp/head-good.md" 2>&1)
   case "$out" in *'fix 11496'*) echo "FAIL: 綁 HEAD 誤報 ($l) — $out"; rc=1 ;; *) echo "ok: 不誤報 ($l)" ;; esac
 done
+
+# 拆單閘門：≥2 分 FAIL＋exit 1；豁免行放行；fence 內的 writes／動詞不算
+split_wo() {  # $1 = 任務段內容 $2 = 額外行
+  printf '# 測試用工單\n## 任務\n%s\n%s\n## 驗收\n```bash\ntest -d /\n```\n預期：rc=0。\n## 禁止\n- 禁止改 fixture。\n' "$1" "$2"
+}
+split_wo '新增 a、修正 b、移除 c、重寫 d。' 'writes: a.sh b.sh c.sh' > "$tmp/split-bad.md"
+"$HERE/deep-lint" "$tmp/split-bad.md" > "$tmp/split.out" 2>&1; src=$?
+if [ "$src" = 1 ] && grep -q 'LINT FAIL: 拆單分數 2/4' "$tmp/split.out"; then echo 'ok: 拆單 2 分→FAIL rc=1'; else echo "FAIL: 拆單 2 分未擋 rc=$src — $(cat "$tmp/split.out")"; rc=1; fi
+split_wo '新增 a、修正 b、移除 c、重寫 d。' 'writes: a.sh b.sh c.sh
+拆單豁免：四處同一個改名，拆開反而互相打架' > "$tmp/split-waive.md"
+"$HERE/deep-lint" "$tmp/split-waive.md" > "$tmp/split.out" 2>&1; src=$?
+if [ "$src" = 0 ] && ! grep -q 'LINT FAIL' "$tmp/split.out"; then echo 'ok: 拆單豁免放行'; else echo "FAIL: 豁免未放行 rc=$src — $(cat "$tmp/split.out")"; rc=1; fi
+split_wo '修正 a。' 'writes: a.sh' > "$tmp/split-one.md"
+printf '```bash\nwrites: x y z w\n# 新增 修正 移除 重寫 建立\n```\n' >> "$tmp/split-one.md"
+out=$("$HERE/deep-lint" "$tmp/split-one.md" 2>&1); src=$?
+case "$src:$out" in 0:*'拆單'*|[!0]:*) echo "FAIL: 單一行為或 fence 內內容誤計 rc=$src — $out"; rc=1;; *) echo 'ok: 單一行為＋fence 內不計分';; esac
 
 exit "$rc"

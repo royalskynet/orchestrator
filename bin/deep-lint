@@ -111,6 +111,33 @@ if [ "$n" -gt "$limit" ]; then
   warn=1
 fi
 
+# 拆單閘門：四訊號各一分——超行數公式、### >2、writes: 路徑 >2、任務段動作動詞 >3。
+# 10-27～11-10 派deep 168 次（不含 /fi）：0 分過 32/54，1 分 27/82，≥2 分 11/32。
+read -r w v waive <<EOF
+$(awk '
+  /^```/ { fence = !fence; next }
+  fence { next }
+  /^[[:space:]]*拆單豁免[：:][[:space:]]*[^[:space:]]/ { waive = 1 }
+  /^##+[[:space:]]*任務/ { intask = 1; next }
+  /^##[[:space:]]/ { intask = 0; next }
+  /^[[:space:]]*writes!?[：:]/ {
+    s = $0; sub(/^[[:space:]]*writes!?[：:][[:space:]]*/, "", s); gsub(/[,，、]/, " ", s)
+    w += split(s, a, " ")
+  }
+  intask { v += gsub(/新增|實作|改成|改為|修正|修好|重寫|建立|加上|補上|移除|刪除|拆成|整合|遷移/, "&") }
+  END { print w + 0, v + 0, waive + 0 }
+' "$wo")
+EOF
+score=$(( (n > limit) + (h3 > 2) + (w > 2) + (v > 3) ))
+why="行數 $((n))/${limit}、### ${h3}/2、writes ${w}/2、動詞 ${v}/3"
+if [ "$score" -ge 2 ] && [ "$waive" = 0 ]; then
+  echo "LINT FAIL: 拆單分數 ${score}/4（${why}）——拆成一單一行為、前一張 verify=pass 才派下一張；真拆不了就加一行「拆單豁免：<理由>」"
+  fail_split=1
+elif [ "$score" -ge 1 ]; then
+  echo "LINT WARN: 拆單分數 ${score}/4（${why}）——2 分起擋"
+  warn=1
+fi
+
 # 斷言閘門：驗收區塊若全是唯讀指令，deep 什麼都沒做
 # wo-verify 也會 rc=0 → verify=pass（2026-09-24 實證）。
 if ! "$WV" "$wo" --dump 2>/dev/null | grep -qE '(^|[;&|[:space:](])(test|\[|\[\[|diff|cmp)[[:space:]]|grep[[:space:]]+-[A-Za-z]*q'; then
@@ -225,5 +252,6 @@ if [ -n "$strict" ]; then
   [ "${fail_strict:-0}" = 1 ] && exit 1
 fi
 [ "${fail_bang:-0}" = 1 ] && exit 1
+[ "${fail_split:-0}" = 1 ] && exit 1
 [ "$warn" -eq 0 ] && echo "LINT OK"
 exit 0

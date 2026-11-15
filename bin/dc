@@ -453,6 +453,8 @@ DC_GATE_SCOPE=only "$OCBIN/gate" judge "$f" "$d" "$pf_dir" || exit $?
 [ "$rl" = 2 ] && { echo "dc: 上游不可用（$(grep -m1 -oE '(Upstream request failed[^"]*|Model [^ ]+ has been deprecated|[M]odel unavailable: [^ ]+|[P]roviderModelNotFoundError: [^.]+)' "$out")），已提早結束" >&2; exit 1; }
 [ "$rl" = 4 ] && { echo "dc: Zen 免費閘道判濫用（Detect Abuse Traffic），整個 Zen 免費池停用 ${ZEN_GATE_S}s（${ZEN_GATE}），已提早結束" >&2; exit 1; }
 [ "$rl" = 3 ] && { echo "dc: opencode ${START_S}s 內沒開工（無「> agent · model」行），判定卡住，已結束" >&2; exit 1; }
+# 10-31、11-13 兩波：repo 的 .git/opencode 快取殘留導致本機 DB 錯，確定性本機錯，所有模型都會失敗
+[ "$rc" -ne 0 ] && grep -q '^no such column: project_id' "$out" && { echo "dc: 中止——opencode 本機 DB 錯 no such column: project_id（repo 的 .git/opencode 快取殘留；mv <repo>/.git/opencode 到 /tmp 後重派）" >&2; exit 2; }
 [ "$rc" -eq 0 ] || { echo "dc: opencode run rc=${rc}（常見：上游掛=1、逾時=124、權限拒絕）" >&2; exit "$rc"; }
 # 10-21：Zen 閘的延遲倍增要靠「上游有正常回應」解封（借鏡 circuitBreaker 的半開探測）。
 # 恢復判準是「請求被上游正常回應」，不是「工單通過」——驗收過不過跟 IP 有沒有被解封無關，

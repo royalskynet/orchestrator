@@ -768,7 +768,8 @@ pool_alert() {
   local np st="$Q/logs/pool-alert.$(date +%F)" msg
   np="$(for m in ${MODELS_MANUAL:-$MODELS}; do prov_of "$m"; done | sort -u | wc -l | tr -d ' ')"
   local bad; bad="$(miss_split)"
-  { [ -n "$bad" ] && [ "$(set -- $bad; echo $#)" -ge "${DCQ_MISS_ALERT:-1}" ]; } || [ "$np" -le 1 ] || return 0
+  # DCQ_MODELS 有設＝刻意整條指定（派od 單模型），只剩一家 provider 是預期，不算縮水（2026-11-14 每天誤報 opencode-go×1）
+  { [ -n "$bad" ] && [ "$(set -- $bad; echo $#)" -ge "${DCQ_MISS_ALERT:-1}" ]; } || { [ -z "${DCQ_MODELS:-}" ] && [ "$np" -le 1 ]; } || return 0
   msg="⚠️ dcq 免費池縮水：$(pool_summary | head -1)。清冊有、本機 opencode.json 沒宣告的，dcq doctor --fix 印補丁"
   echo "dcq: WARN ${msg}" >&2
   [ "$(cat "$st" 2>/dev/null)" = "${bad:-single}" ] && return 0

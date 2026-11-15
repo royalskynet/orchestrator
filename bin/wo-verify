@@ -60,9 +60,10 @@ if printf '%s\n' "$script" | grep -qE 'openmausbot[[:space:]]+run|wake\.(turn|wa
 fi
 if [ "$dry" -eq 1 ]; then printf '%s\n' "$script" | bash -n; exit $?; fi
 # 不開 pipefail：`cmd | grep -q` 命中即關管，cmd 續寫吃 SIGPIPE → 141 假失敗（09-22 實證 launchctl print/claude mcp get）
+# 腳本走參數、stdin 接 /dev/null：驗收行讀 stdin（ssh／m2ssh／cat）不會吃掉後續行。
 # 逾時可調：dc 的 do-nothing 負向對照在派工前跑同一支腳本，不該為此等 10 分鐘。
-printf 'set -e\ntrap '\''echo "wo-verify FAIL line $((LINENO-2)): $BASH_COMMAND"'\'' ERR\n%s\n' "$script" | timeout "${WO_VERIFY_TIMEOUT:-600}" bash 2>&1
-rc=${PIPESTATUS[1]}
+timeout "${WO_VERIFY_TIMEOUT:-600}" bash -c "$(printf 'set -e\ntrap '\''echo "wo-verify FAIL line $((LINENO-1)): $BASH_COMMAND"'\'' ERR\n%s\n' "$script")" </dev/null 2>&1
+rc=$?
 echo "--- wo-verify rc=$rc"
 exit "$rc"
 }
