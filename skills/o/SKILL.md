@@ -15,7 +15,7 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 
 ## 誰做
 
-- 主 session 5 分鐘內做得完就自己做；超過就主動派，不問、不等答覆，`dcq plan` 輸出附在回報。
+- host 與 M2 一致：實作工作預設走 `ds-claude`，不套 5 分鐘門檻；派o 時不問、不等答覆，`dcq plan` 輸出附在回報。
 - 需要判斷力（設計取捨、找根因）→ 主 session。
 - 要寫 `~/.claude/**`、`.git/config`、launchd → 主 session 直接做；需 agent 多步自主才派deep。gh／建 repo／push 這類低難度活可以派（dcq 執行環境讀得到 gh 憑證）。
 - 其餘一律走 dcq，單張也是：只有 dcq 有 fallback 鏈與逾時換手。裸 `dc` 只跑一隻模型，用於指定模型做實驗。
@@ -96,7 +96,7 @@ Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|m
 與 `ds-claude` skill 內文的「預設全部派」「先問使用者」衝突時以本段為準。
 
 - 預設＝派o（`DCQ_ORDER=default`，dcq 未設時也是它）。免費全敗升 opencode-go 訂閱層；API 墊底要 `DCQ_ALLOW_API=1`，只有這個才問使用者。使用者明說才走派os。
-- 機械活、多步工單、能寫成一條驗收的改動，預估超過 5 分鐘就先派o，由主 session 主動提出，派前不問、不等答覆。goal state 有 `nightnav.authorized` 的批次交 `/nightnav` 夜裡跑。完工由 wo-verify 機械判定，exit code 說了算。
+- 機械活、多步工單、能寫成一條驗收的改動，由主 session 主動提出派o（不套 5 分鐘門檻，分流以 ds-claude 為準），派前不問、不等答覆。goal state 有 `nightnav.authorized` 的批次交 `/nightnav` 夜裡跑。完工由 wo-verify 機械判定，exit code 說了算。
 - 派deep（deepclaude 的 `deep-run`，OpenCode Go 訂閱）：要 agent 多步自主或沙箱外寫入。gh／push 這類低難度活派o 就能做。兩條線不混。
 - o 做不了（沙箱外寫入、主 session 即時上下文）才依能力派：重閱讀／內容生成／查證掃描／輕量輔助／格式搬運先走 `ds-claude`（`ds-run.sh`：改檔帶驗收，唯讀查詢用 `--ask`；底層 opencode run DeepSeek flash），驗收失敗照它的階梯升 pro。
 - ds-claude 開著時（預設，`/ds-claude off` 關），Sonnet 級與沒寫 model 的子代理改派od、Haiku 級改派of。hook `subagent-model-remind.sh`（symlink 到公開版 `subagent-redirect.sh`，對照表 `~/dev/ether-projects/ds-claude-local/redirect.json`）會擋並給 dcq 指令。`Explore`／`o-worker`／`Plan`／`reviewer` 例外，要留 Claude 子代理的在 prompt 加 `ds-keep`。
