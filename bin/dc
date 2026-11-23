@@ -62,7 +62,9 @@ tier() {
     # 無 OmniRoute 機器的直連兜底（2026-10-24）：openrouter/free 只路由 :free 模型；NIM 免費額度（build.nvidia.com）。
     # 2026-10-25 放寬：openrouter 只認 :free 後綴；NIM 整家走免費額度（無付費方案）；Groq 免費方案（回應頭 8000 TPM／1000 RPD）。
     # Groq 帳號若升級 Dev tier 就會按量計費，groq/* 這段要改回 metered。
-    openrouter/openrouter/free|openrouter/*:free|nvidia/*|groq/*) echo free ;;
+    # 2026-11-23 派oo：openrouter2＝第二把 freerouter key 同認 :free；nvidia2／nvidia3＝NIM 備 key 同免費額度；
+    # agnes/*-flash＝Agnes 免費 API（pricing $0 證據只有 flash 系）；agnes pro 系未驗價，走 metered 警示。
+    openrouter/openrouter/free|openrouter/*:free|openrouter2/*:free|nvidia/*|nvidia2/*|nvidia3/*|agnes/*-flash|groq/*) echo free ;;
     # 2026-10-24：Kilo Gateway 免 key 只放 :free；AI Studio key 的專案沒開 billing（pro 系列一律 429 quota），flash 走免費層。
     # 那個 Google 專案若開了 billing，google/* 就會按量計費，這行要改回 metered。
     kilo/*:free|google/gemini-*flash*) echo free ;;
@@ -152,7 +154,7 @@ esac
 # 目錄說現價非零就不派（照派會扣錢）；id 缺 :free 後綴會靜默打到同名付費版，也不派、並指出正確 id。
 # rc=1：dcq 當這隻失敗、冷卻後換下一隻，不停整條階梯。DC_FREEPOOL=off 強制跳過。
 FP="$(dirname "$(readlink -f "$0")")/freepool-guard"
-case "$m" in kilo/*|openrouter/*)
+case "$m" in kilo/*|openrouter/*|openrouter2/*)
   if [ -x "$FP" ] && [ "${DC_FREEPOOL:-on}" != off ]; then
     _fpl="$("$FP" verify "$m" 2>/dev/null | head -1)"
     _fpv="$(printf '%s' "$_fpl" | cut -f2)"; _fpr="$(printf '%s' "$_fpl" | cut -f3)"

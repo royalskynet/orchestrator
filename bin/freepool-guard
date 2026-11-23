@@ -27,6 +27,7 @@
 """
 import argparse
 import datetime as dt
+import fcntl
 import json
 import os
 import sys
@@ -40,6 +41,9 @@ CATALOGS = {
     "kilo": "https://api.kilo.ai/api/gateway/v1/models",
     "openrouter": "https://openrouter.ai/api/v1/models",
 }
+# 同一個上游、不同 opencode provider 名（各自帶一把 key）：dc_id 前綴 → 價格目錄歸屬。
+# openrouter2＝第二把 freerouter key（2026-11-23 派oo），上游仍是 OpenRouter。
+PROV_CATALOG = {"openrouter2": "openrouter"}
 CACHE = Path(os.environ.get("FREEPOOL_CACHE") or Path.home() / ".dcq" / "freepool.json")
 TTL_H = float(os.environ.get("FREEPOOL_TTL_H") or 24)
 UA = {"User-Agent": "freepool-guard/1.0 (dispatch-router)", "Accept": "application/json"}
@@ -159,9 +163,10 @@ def judge(dc_id, rep):
     照原名打會打到同名付費版（FreeToken-Bots 實測踩過一次）。
     """
     prov, mid = split_id(dc_id)
-    if prov not in CATALOGS or not rep:
-        return "unknown", dc_id, "無價格目錄" if prov not in CATALOGS else "無快取"
-    p = rep["providers"].get(prov) or {}
+    cat = PROV_CATALOG.get(prov, prov)
+    if cat not in CATALOGS or not rep:
+        return "unknown", dc_id, "無價格目錄" if cat not in CATALOGS else "無快取"
+    p = rep["providers"].get(cat) or {}
     free, paid = p.get("free") or {}, set(p.get("paid") or [])
     if mid in free:
         return "free", dc_id, ""
@@ -180,7 +185,7 @@ def catalog_free_rows(path):
         if not line.strip() or line.startswith("#"):
             continue
         f = (line.split("\t") + [""] * 8)[:8]
-        if f[0] == "free" and f[6] and split_id(f[6])[0] in CATALOGS:
+        if f[0] == "free" and f[6] and PROV_CATALOG.get(split_id(f[6])[0], split_id(f[6])[0]) in CATALOGS:
             rows.append((f[6], f[2], f[7]))
     return rows
 
@@ -204,7 +209,7 @@ def cmd_scan(a):
         if v["error"]:
             print(f"freepool-guard: WARN {p} 讀不到（保留上次結果判定）：{v['error']}", file=sys.stderr)
             if old and not a.dry_run:  # 單家失敗不要把舊名單洗掉
-                rep["providers"][p] = old.get("providers", {}).get(p, v)
+                rep["providers"][p] = dict(old.get("providers", {}).get(p, v), error=v["error"])
         tools = sum(1 for m in v["free"].values() if m["tools"])
         print(f"{p}: 零價 {len(v['free'])}（支援 tools {tools}）")
     if old:
@@ -405,8 +410,33 @@ def cmd_probe(a):
 def cmd_daily(a):
     if os.environ.get("FREEPOOL_OFFLINE") != "1" and cmd_scan(argparse.Namespace(dry_run=False)) != 0:
         return 2
+    rep, state = load(refresh=False)
+    kilo_catalog = (rep or {}).get("providers", {}).get("kilo") or {}
+    # 只在本次成功取得 kilo 完整目錄時自動下架；漲價仍交給 guard 拒派。
+    if state == "fresh" and kilo_catalog and not kilo_catalog.get("error"):
+        path = Path(a.tsv)
+        with open(str(path) + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            gone = {dc_id for dc_id, _, _ in catalog_free_rows(path)
+                    if dc_id.startswith("kilo/") and judge(dc_id, rep)[0] == "unknown"}
+            if gone:
+                lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+                kept = [line for line in lines if not (line.startswith("free\t")
+                        and len(line.split("\t")) > 6 and line.split("\t")[6] in gone)]
+                fd, tmp = tempfile.mkstemp(prefix=".models-", dir=path.parent)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as out:
+                        out.writelines(kept)
+                        out.flush()
+                        os.fsync(out.fileno())
+                    os.chmod(tmp, path.stat().st_mode & 0o777)
+                    os.replace(tmp, path)
+                finally:
+                    if os.path.exists(tmp):
+                        os.unlink(tmp)
+                for dc_id in sorted(gone):
+                    print(f"freepool-guard: 自動下架 {dc_id}（上游目錄查無此 id）")
     grc = cmd_guard(a)
-    rep, _state = load(refresh=False)
     have = {dc_id for dc_id, _m, _f in catalog_free_rows(a.tsv)}
     try:
         probed = json.loads(PROBED.read_text()) if PROBED.exists() else {}

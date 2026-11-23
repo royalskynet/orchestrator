@@ -78,6 +78,27 @@ free	opencode-run	kilo/xingchen-agi/xing4.0-29b-a4b:free	ok	oc-free-check OK 2.3
 free	opencode-run	kilo/stealth/glyph-cluster	ok	oc-free-check OK 4.6s（10-26）；freepool-guard probe 200 空內容（10-26，疑 reasoning 吃光 token，fix 9997；待真實派工驗）	Kilo 免 key；stealth 模型（來源未公開、可能被上游收走對話），零價期間才可用，故 easy；10-26 freepool-guard propose 加	kilo/stealth/glyph-cluster	easy
 free	opencode-run	kilo/openrouter/free	ok	oc-free-check OK 3.5s（10-26）；freepool-guard probe（OmniRoute test-all）OK（10-26）	OpenRouter 免費池隨機分配，等於原 omniroute/or-free 的替代直連版；or-free 實績 23 跑 1 過故 easy-only；10-26 加	kilo/openrouter/free	easy-only
 free	opencode-run	kilo/liquid/lfm-2.5-2.6b:free	ok	freepool-guard daily probe（OmniRoute test-all）OK（10-26 09:22）	Kilo 免 key；2.6B 極小模型，能力有限故 easy-only；10-26 freepool-guard daily 提議、使用者核准加	kilo/liquid/lfm-2.5-2.6b:free	easy-only
+free	opencode-run	nvidia2/nvidia/nemotron-3-ultra-550b-a55b	ok	curl 200（11-23）	opencode 直連 NIM 第二把 key（nvidia2 provider）；派oo 成員；11-23 加	nvidia2/nvidia/nemotron-3-ultra-550b-a55b	any
+free	opencode-run	nvidia2/minimaxai/minimax-m3.1-flash	ok	curl 200 pong（11-23）	opencode 直連 NIM 第二把 key；同 id 在 key1 call_logs 11-16 起 flaky，key2 額度獨立；11-23 加	nvidia2/minimaxai/minimax-m3.1-flash	any
+free	opencode-run	nvidia2/nvidia/nemotron-3.5-lightning-30b-a3b	ok	curl 200（11-23）	opencode 直連 NIM 第二把 key；11-23 加	nvidia2/nvidia/nemotron-3.5-lightning-30b-a3b	any
+free	opencode-run	nvidia3/nvidia/nemotron-3-ultra-550b-a55b	ok	curl 200（11-23）	opencode 直連 NIM 第三把 key（nvidia3 provider）；派oo 成員；11-23 加	nvidia3/nvidia/nemotron-3-ultra-550b-a55b	any
+free	opencode-run	nvidia3/minimaxai/minimax-m3.1-flash	ok	curl 200 pong（11-23）	opencode 直連 NIM 第三把 key；11-23 加	nvidia3/minimaxai/minimax-m3.1-flash	any
+free	opencode-run	nvidia3/nvidia/nemotron-3.5-lightning-30b-a3b	ok	curl 200（11-23）	opencode 直連 NIM 第三把 key；11-23 加	nvidia3/nvidia/nemotron-3.5-lightning-30b-a3b	any
+free	opencode-run	openrouter/nvidia/nemotron-3-ultra-550b-a55b:free	ok	curl 200 pong（11-23）	自有 freerouter key（第一帳號，每日 1000 次 :free）；freepool-guard 驗價；派oo 成員；11-23 加	openrouter/nvidia/nemotron-3-ultra-550b-a55b:free	any
+free	opencode-run	openrouter/nvidia/nemotron-3.5-super-vl:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第一帳號）；有視覺；11-23 加	openrouter/nvidia/nemotron-3.5-super-vl:free	any
+free	opencode-run	openrouter/nvidia/nemotron-3.5-lightning:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第一帳號）；11-23 加	openrouter/nvidia/nemotron-3.5-lightning:free	any
+free	opencode-run	openrouter/google/gemma-4-31b-it:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第一帳號）；11-23 加	openrouter/google/gemma-4-31b-it:free	any
+free	opencode-run	openrouter/inclusionai/ling-3.2-flash:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第一帳號）；11-23 加	openrouter/inclusionai/ling-3.2-flash:free	any
+free	opencode-run	openrouter/baidu/ernie-5.5-flash-preview:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第一帳號）；11-23 加	openrouter/baidu/ernie-5.5-flash-preview:free	any
+free	opencode-run	openrouter2/nvidia/nemotron-3-ultra-550b-a55b:free	ok	curl 200 pong（11-23）	自有 freerouter key（第二帳號，獨立每日 1000 次 :free）；freepool-guard 驗價（alias openrouter）；派oo 成員；11-23 加	openrouter2/nvidia/nemotron-3-ultra-550b-a55b:free	any
+free	opencode-run	openrouter2/nvidia/nemotron-3.5-super-vl:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第二帳號）；有視覺；11-23 加	openrouter2/nvidia/nemotron-3.5-super-vl:free	any
+free	opencode-run	openrouter2/nvidia/nemotron-3.5-lightning:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第二帳號）；11-23 加	openrouter2/nvidia/nemotron-3.5-lightning:free	any
+free	opencode-run	openrouter2/google/gemma-4-31b-it:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第二帳號）；11-23 加	openrouter2/google/gemma-4-31b-it:free	any
+free	opencode-run	openrouter2/inclusionai/ling-3.2-flash:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第二帳號）；11-23 加	openrouter2/inclusionai/ling-3.2-flash:free	any
+free	opencode-run	openrouter2/baidu/ernie-5.5-flash-preview:free	unverified	OR /models 11-23（tools、pricing 0）	自有 freerouter key（第二帳號）；11-23 加	openrouter2/baidu/ernie-5.5-flash-preview:free	any
+free	opencode-run	agnes/agnes-3.0-flash	ok	curl 200（11-23）	Agnes 免費 API 直連（apihub.agnes-ai.com，永久免費無需信用卡；額度未公開，不進鏈中段 fix 10235）；原經 omniroute 派（10-26 退役）改直連；11-23 加	agnes/agnes-3.0-flash	any
+free	opencode-run	agnes/agnes-2.5-flash	ok	curl 200（11-23）	Agnes 免費 API 直連；11-23 加	agnes/agnes-2.5-flash	any
+free	opencode-run	agnes/agnes-3.0-pro	unverified	curl 200（11-23）	Agnes 直連；定價未確認（agnes 標榜全免費但 pro 系列沒有 $0 證據），先不填 dc_id		any
 free	gemini-cli	gemini（AI Studio key）	unverified	settings 有 API key	免費層額度官方不再公布，看 AI Studio；本機沒有成功紀錄		any
 sub	claude-code	claude-fable-5-1／claude-opus-5-5／claude-sonnet-5-5／claude-haiku-5-5	ok	auth claude.ai pro	本 session 即是；子 agent 用 Agent 工具 model 參數		any
 sub	claude-code	claude-haiku-5-5	ok	claude -p 10-25 寫檔＋bash OK 4s（apiKeySource=none）	dcq Claude 層：bin/claude-exec，只在 DCQ_ORDER=sub（派os）最後兜底	claude/claude-haiku-5-5	any

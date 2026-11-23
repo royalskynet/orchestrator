@@ -24,7 +24,9 @@ n="$(basename "$1" .md)"
 echo "IN $n $DC_FREE_MODEL $(date +%s.%N)" >> "$TRACE"
 case "$n" in slow*) sleep 3 ;; *) sleep 1 ;; esac
 echo "OUT $n $DC_FREE_MODEL $(date +%s.%N)" >> "$TRACE"
-[ "$DC_FREE_MODEL" = za ] && exit 1; exit 0
+[ "$DC_FREE_MODEL" = za ] && exit 1
+[ "$DC_FREE_MODEL" = "nvidia2/fail" ] && exit 1
+exit 0
 EOF
 chmod +x "$T/bin/dc"
 export TRACE="$T/trace"; : > "$TRACE"
@@ -155,6 +157,21 @@ DCQ_MODELS="kilo/k:free zb" DCQ_MODEL_MAX=1 DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 d
 [ "$(grep '^IN slowft' "$TRACE" | awk '{print $3}' | sort | tr '\n' ' ')" = "kilo/k:free zb " ] && ok "opencode 全忙借 freepool 不排隊" || bad "軟分層：$(grep '^IN slowft' "$TRACE")"
 out="$(DCQ_MODELS="kilo/k:free za" DCQ_AUTORANK=0 dcq plan "$T/tasks/ft2.md" 2>&1)"
 echo "$out" | grep -q '1 免費 opencode：za$' && echo "$out" | grep -q '2 免費 freepool：kilo/k:free$' && ok "plan 分列兩層" || bad "plan 兩層：$out"
+
+# 5c) 派oo（11-23）：只用自有 key 免費層（OO_PROVS 的 provider），全敗就失敗——不碰 zen、kilo、懲罰、訂閱
+printf 'free\topencode-run\tnvidia2/fail\tok\tx\tx\tnvidia2/fail\tany\n' >> "$T/cat/models.tsv"
+echo '{"provider":{"omniroute":{"models":{"t1":{}}},"nvidia2":{"options":{"apiKey":"x"},"models":{"fail":{}}}}}' > "$T/xdg/opencode/opencode.json"
+echo "# oo1" > "$T/tasks/oo1.md"; : > "$TRACE"; dcq clear >/dev/null 2>&1
+id="$(DCQ_ORDER=oo dcq add "$T/tasks/oo1.md" "$T/w1" mid 2>/dev/null)"
+grep -qx 'ORDER=oo' "$DCQ_HOME/pending/$id.job" && ok "DCQ_ORDER=oo 記進工單" || bad "oo 沒記：$(grep ORDER "$DCQ_HOME/pending/$id.job")"
+DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 dcq run -j 1 >/dev/null 2>&1
+[ "$(grep '^IN oo1 ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "nvidia2/fail " ] && ok "oo 只派自有 key 層" || bad "oo 派了池外：$(grep '^IN oo1 ' "$TRACE")"
+ls "$DCQ_HOME/failed" | grep -q "$id" && ok "oo 全敗就失敗不升訂閱" || bad "oo 沒進 failed"
+out="$(DCQ_ORDER=oo DCQ_AUTORANK=0 dcq plan "$T/tasks/oo1.md" 2>&1)"
+if echo "$out" | grep -q '自有 key 免費層' && echo "$out" | grep -q 'nvidia2/fail' && ! echo "$out" | grep -q '訂閱'; then ok "plan oo 只列自有 key 層"; else bad "plan oo：$out"; fi
+DCQ_ORDER=oo DCQ_OO_PROVS="" dcq plan "$T/tasks/oo1.md" >/dev/null 2>&1  # 空名單不該炸
+out="$(DCQ_OO_PROVS= DCQ_ORDER=oo DCQ_AUTORANK=0 dcq plan "$T/tasks/oo1.md" 2>&1)"
+echo "$out" | grep -q 'nvidia2/fail' && bad "OO_PROVS 空字串還派 nvidia2" || ok "DCQ_OO_PROVS 可改名單"
 
 # 6) bash 會把緊接在 $var 後的全形字當成變數名（set -u 下直接 unbound variable），一律要寫 ${var}
 bad_lines="$(perl -ne 'print "$ARGV:$.: $_" if /\$[A-Za-z_][A-Za-z0-9_]*(?=[\x80-\xff])/; close ARGV if eof' "$R"/bin/*)"

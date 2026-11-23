@@ -26,6 +26,7 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 |---|---|---|
 | 派o／派工 | `default` | 免費 → 懲罰 → 兜底 → 冷宮 → 訂閱（API 預設關） |
 | 派of | `free` | 只用免費的層，全敗就失敗 |
+| 派oo | `oo` | 只用自有 key 免費層（NIM 三把 key、OpenRouter 兩把 freerouter key、agnes；`DCQ_OO_PROVS` 可改名單——groq／google 免費狀態未驗證未進預設），全敗就失敗 |
 | 派os | `sub` | 訂閱先，用盡回免費，API 墊底 |
 | 派od | （不用）| `DCQ_MODELS=opencode-go/deepseek-v4.1-flash dcq add …`：只跑 DeepSeek flash（Go 訂閱），失敗不換層 |
 
