@@ -359,7 +359,7 @@ pidf="$out.pid"; rcf="$out.rc"
 # --title：沒給標題時 opencode 會另叫 small model（nemotron-3-ultra-free）產標題，每張工單白吃一份免費額度
 # 連子程序一起殺：子程序（MCP／LSP 等）還握著 stdout 的話，tee 不會結束，wait 會卡住。
 kill_oc() { local p; p=$(cat "$pidf" 2>/dev/null) || return 0; pkill -TERM -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; return 0; }
-trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf"; cleanup_pf' EXIT
+trap 'release_lock; kill_oc; rm -f "$out" "$pidf" "$rcf" "${self_mark:-}"; cleanup_pf' EXIT
 # opencode v2（2026-10）拿掉 --pure／--dir、log-level 改小寫（公開 repo 692489e）；1.18.x 照舊。
 # 看 run --help 有沒有 --pure 決定（0.2s），工作目錄一律再 cd 一次，兩版都對。
 # DC_OC_V2=0／1 可跳過偵測（測試的假 opencode 不認 --help）
@@ -388,41 +388,92 @@ if { [ "${ocrun[*]}" = "opencode run" ] || [ "$sbx_codex" = 1 ]; } && [ "${DC_SA
   done
   sbx=(sandbox-exec -p "(version 1)(allow default)(deny file-read* file-write* (subpath \"$_r/.claude/projects\") (subpath \"$_r/.creds\") (subpath \"$_r/.ssh\"))${_ok:+(allow file-read*$_ok)}")
 fi
-{ cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" ${sbx[@]+"${sbx[@]}"} "${ocrun[@]}" \
-  "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
+fwd_args=("$@")
+# 空回合偵測（F3）用的工作區自拍：git repo 比 status；非 git cwd 靠 mtime 標記檔，
+# 跑完後 $d 底下沒有比標記新的檔案＝沒動過（`-newer` 比的是 mtime）。
+self_before="$(git -C "$d" status --porcelain 2>/dev/null)"
+self_mark="$out.selfmark"; : > "$self_mark"
+oc_run() { # ${1}=追加提示句（空回合續做用）；結果寫進全域 ${rc} ${rl} ${ts}，輸出進 ${out}
+  rm -f "$pidf" "$rcf"; : > "$out"; : > "$self_mark"
+  { cd "$d" && sh -c 'echo $$ > "$0"; exec "$@"' "$pidf" ${sbx[@]+"${sbx[@]}"} "${ocrun[@]}" \
+    "你是執行人。任務與驗收都在附加的檔案裡，先完整讀完再動手。
 驗收由外部 wo-verify 機械執行，你的自述不影響成敗判定。
 驗收區塊在派工前已被複製釘住並逐行比對：改它只會判 exit 3 篡改，不可能讓你過關。
-驗收區塊本身有誤（怎麼做都不可能通過）時，保留驗收原樣，輸出一行 DC_TASK_DEFECT: <驗收行號> <理由> 後立即結束。" \
-  "${ocflags[@]}" --print-logs -f "$f" --title "dc: $(basename "$f")" "$@" </dev/null
-  echo $? > "$rcf"; } 2>&1 | tee "$out" &
-teepid=$!
-rl=0; started=0; ts=$(date +%s)
-while kill -0 "$teepid" 2>/dev/null; do
-  if grep -q -E "$QUOTA_RE" "$out" 2>/dev/null; then
-    rl=5; kill_oc; break
+驗收區塊本身有誤（怎麼做都不可能通過）時，保留驗收原樣，輸出一行 DC_TASK_DEFECT: <驗收行號> <理由> 後立即結束。$1" \
+    "${ocflags[@]}" --print-logs -f "$f" --title "dc: $(basename "$f")" "${fwd_args[@]}" </dev/null
+    echo $? > "$rcf"; } 2>&1 | tee -a "$out" &
+  teepid=$!
+  rl=0; started=0; ts=$(date +%s)
+  # 不用 kill -0 pid 判活：tee 死了之後 pid 可能被別的行程重用，kill -0 照樣回成功。
+  # jobs 查的是自己的工作表，跟 pid 重用無關。這是防禦性改動：issue #32 那次空轉的根因
+  # 沒重現出來（kill -0 版壓力測試 700 次也全過），殺不掉時由 dcq 的 DCQ_KILL_GRACE 兜底。
+  while jobs -lr | grep -qw "$teepid"; do
+    if grep -q -E "$QUOTA_RE" "$out" 2>/dev/null; then
+      rl=5; kill_oc; break
+    fi
+    if grep -q -E "$RL_RE" "$out" 2>/dev/null; then
+      rl=1; kill_oc; break
+    fi
+    if grep -q -E "$UA_RE" "$out" 2>/dev/null; then
+      rl=2; kill_oc; break
+    fi
+    if grep -q -E "$ABUSE_RE" "$out" 2>/dev/null; then
+      rl=4; kill_oc; "$ZG" trip "dc 派工 $m" >/dev/null 2>&1 \
+        || { mkdir -p "$(dirname "$ZEN_GATE")"; echo $(( $(date +%s) + ZEN_GATE_S )) > "$ZEN_GATE"; }; break
+    fi
+    if [ "$started" = 0 ]; then
+      if grep -q -E "$START_RE" "$out" 2>/dev/null; then started=1
+      elif [ $(( $(date +%s) - ts )) -ge "$START_S" ]; then rl=3; kill_oc; break; fi
+    fi
+    sleep 1
+  done
+  wait "$teepid"
+  # bash 3.2：等被殺子程序期間收到的 TERM 會連 trap 一起丟（pending trap 被清掉），
+  # 訊號來了卻照正常流程往下走。被 pkill 時寫 rc 檔的 { } 子 shell 一起死 → rcf 必缺；
+  # 正常完工一定寫得出 rcf，拿「缺 rcf」當「其實被殺」的記號補退 143，免得半成品被
+  # 送進 wo-verify、或讓 dcq 把被殺的工單當一般失敗重試（issue #32）。
+  [ -f "$rcf" ] || exit 143
+  rc=$(cat "$rcf" 2>/dev/null || echo 1)
+  # Zen／Go 額度錯誤 opencode 自己 1 秒內就結束，輪詢迴圈常來不及看到
+  [ "$rl" = 0 ] && grep -q -E "$QUOTA_RE" "$out" 2>/dev/null && rl=5
+  # 型錄沒有這隻也是秒退 rc=1，同樣補查（套 sandbox-exec 後啟動時序變，迴圈常漏看，10-28）
+  [ "$rl" = 0 ] && grep -q -E "$UA_RE" "$out" 2>/dev/null && rl=2
+}
+# 這次嘗試的 opencode session 裡 tool part 數（空回合偵測用；db 不在／查不到→0，不拖累派工）
+dc_tool_count() {
+  local db dd dp sid
+  db="${DCQ_OC_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}"
+  [ -r "$db" ] || { echo 0; return; }
+  command -v sqlite3 >/dev/null 2>&1 || { echo 0; return; }
+  dd="$(cd "$d" 2>/dev/null && pwd)" || { echo 0; return; }
+  dd=${dd//\'/\'\'}
+  dp="$(cd "$d" 2>/dev/null && pwd -P)"; dp=${dp//\'/\'\'}
+  sid="$(sqlite3 -readonly -cmd '.timeout 2000' "$db" \
+    "SELECT id FROM session WHERE directory IN ('$dd','$dp') AND time_created>=$(( ts*1000 )) ORDER BY time_created DESC LIMIT 1" 2>/dev/null)"
+  [ -n "$sid" ] || { echo 0; return; }
+  sid=${sid//\'/\'\'}
+  sqlite3 -readonly -cmd '.timeout 2000' "$db" \
+    "SELECT COUNT(*) FROM part WHERE session_id='$sid' AND json_valid(data) AND json_extract(data,'$.type')='tool'" 2>/dev/null \
+    || echo 0
+}
+# 空回合（F3）：exit 0、工作區無改動、session 無工具呼叫（opencode #55378）。
+empty_turn() {
+  [ "$rl" = 0 ] && [ "$rc" = 0 ] || return 1
+  if git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then
+    [ "$(git -C "$d" status --porcelain 2>/dev/null)" = "$self_before" ] || return 1
+  else
+    [ -z "$(find "$d" -newer "$self_mark" -print -quit 2>/dev/null)" ] || return 1
   fi
-  if grep -q -E "$RL_RE" "$out" 2>/dev/null; then
-    rl=1; kill_oc; break
-  fi
-  if grep -q -E "$UA_RE" "$out" 2>/dev/null; then
-    rl=2; kill_oc; break
-  fi
-  if grep -q -E "$ABUSE_RE" "$out" 2>/dev/null; then
-    rl=4; kill_oc; "$ZG" trip "dc 派工 $m" >/dev/null 2>&1 \
-      || { mkdir -p "$(dirname "$ZEN_GATE")"; echo $(( $(date +%s) + ZEN_GATE_S )) > "$ZEN_GATE"; }; break
-  fi
-  if [ "$started" = 0 ]; then
-    if grep -q -E "$START_RE" "$out" 2>/dev/null; then started=1
-    elif [ $(( $(date +%s) - ts )) -ge "$START_S" ]; then rl=3; kill_oc; break; fi
-  fi
-  sleep 1
+  [ "$(dc_tool_count)" = 0 ]
+}
+# 空回合對同一隻模型補一句續做，上限 1 次（DC_EMPTY_REDO=0 關）。第二次跑完落既有判定。
+extra=""
+for _redo in 1 2; do
+  oc_run "$extra"
+  [ "$_redo" = 1 ] && [ "${DC_EMPTY_REDO:-1}" != 0 ] && empty_turn || break
+  extra="（續做：你上一輪沒有執行任何動作——沒有改動檔案、也沒有工具呼叫。請照工單內容完成；工單本身有誤時照原樣輸出 DC_TASK_DEFECT。）"
+  echo "dc: 空回合（工作區無改動、無工具呼叫），同一模型續做 1 次" >&2
 done
-wait "$teepid"
-rc=$(cat "$rcf" 2>/dev/null || echo 1)
-# Zen／Go 額度錯誤 opencode 自己 1 秒內就結束，輪詢迴圈常來不及看到
-[ "$rl" = 0 ] && grep -q -E "$QUOTA_RE" "$out" 2>/dev/null && rl=5
-# 型錄沒有這隻也是秒退 rc=1，同樣補查（套 sandbox-exec 後啟動時序變，迴圈常漏看，10-28）
-[ "$rl" = 0 ] && grep -q -E "$UA_RE" "$out" 2>/dev/null && rl=2
 # 比在所有其他判定之前：越界與成敗無關，PASS 的工單一樣可能寫壞別的 worktree。
 # exit 2 讓 dcq 走 FATAL 不重試——換模型重跑只會再污染一次。
 drift="$(_wt_snap | while read -r w h1 s1; do

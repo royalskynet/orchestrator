@@ -11,6 +11,7 @@ mkdir -p "$T/bin" "$T/wa" "$T/wb" "$T/cfg/opencode"
 export DC_BIN="$T/bin" PATH="$T/bin:$PATH"
 export DCQ_HOME="$T/q"                  # 鎖根目錄
 export XDG_CONFIG_HOME="$T/cfg"         # 別碰使用者真的 opencode.json
+export DC_EMPTY_REDO=0                  # 假 opencode 故意不做事（只測鎖），別被 F3 空回合續做多叫一次
 # DC_NEGCTL=0：這些測試的 wo-verify 是 `exit 0` 的假貨，do-nothing 對照會當場中止派工。
 # 負向對照本身由 dc_verify_gate_test.sh 驗。
 export DC_FREECHECK=off DC_NO_TIMEOUT_WARN=1 DC_NEGCTL=0

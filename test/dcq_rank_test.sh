@@ -229,5 +229,21 @@ got="$(DCQ_MODELS= DCQ_POOL_ZEN="a" DCQ_POOL_PAID="p/fast p/slow" DCQ_POOL_TAIL=
 [ "$got" = "p/fast p/slow" ] || { echo "FAIL paid default order: got [$got] want [p/fast p/slow]"; fail=1; }
 got="$(DCQ_RANK_PAID=cost DCQ_MODELS= DCQ_POOL_ZEN="a" DCQ_POOL_PAID="p/fast p/slow" DCQ_POOL_TAIL="" "$DCQBIN" rank | sed -n 's/^訂閱層：//p')"
 [ "$got" = "p/slow p/fast" ] || { echo "FAIL paid cost order: got [$got] want [p/slow p/fast]"; fail=1; }
+# 16) issue #35：表格尾段印各難度 PASS out_tok 的 n／p50／p95／建議值 ceil(p95×1.25)；
+#     樣本 <RANK_MIN 顯示樣本不足；out_tok 0／空不算；舊格式不印這段
+#     easy：n=12、值 101..1201 → p50=601、p95=1201、建議 ceil(1501.25)=1502；用非整數乘積抓無條件進位變異；mid n=3、hard n=0 → 樣本不足
+: > "$G"; : > "$P"
+for i in $(seq 12); do printf '%s\ttk\t10\t0\texit\t60\teasy\t%s\t0\t0\n' "$D" "$(( i * 100 + 1 ))" >> "$G"; done
+printf '%s\ttk\t10\t0\texit\t60\teasy\t0\t0\t0\n' "$D" >> "$G"   # out_tok=0 不算樣本
+printf '%s\ttk\t10\t0\texit\t60\teasy\n' "$D" >> "$G"             # 缺第 8 欄不算樣本
+for i in 1 2 3; do printf '%s\ttk\t10\t0\texit\t60\tmid\t500\t0\t0\n' "$D" >> "$G"; done
+out="$(DCQ_MODELS= DCQ_POOL_ZEN="tk" DCQ_POOL_GO="" "$DCQBIN" rank)"
+got="$(printf '%s\n' "$out" | sed -n 's/^  easy //p')"
+[ "$got" = "n=12 p50=601 p95=1201 建議 DCQ_TOK_MAX=1502" ] || { echo "FAIL tokmax easy: got [$got]"; fail=1; }
+printf '%s\n' "$out" | grep -q 'mid  樣本不足' || { echo "FAIL tokmax mid 樣本不足"; fail=1; }
+printf '%s\n' "$out" | grep -q 'hard 樣本不足' || { echo "FAIL tokmax hard 樣本不足"; fail=1; }
+: > "$G"; for i in $(seq 10); do rowd r1 0 100; done
+out="$(DCQ_MODELS= DCQ_POOL_ZEN="r1" DCQ_POOL_GO="" "$DCQBIN" rank)"
+if printf '%s\n' "$out" | grep -q 'DCQ_TOK_MAX 建議值'; then echo "FAIL old format 仍印建議段"; fail=1; fi
 [ "$fail" = 0 ] && echo PASS
 exit "$fail"

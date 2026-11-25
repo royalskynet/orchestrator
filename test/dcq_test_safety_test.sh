@@ -14,6 +14,16 @@ chk() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: got '$2
 mkdir -p "$T/bin"
 printf '#!/bin/sh\nexit 1\n' > "$T/bin/mktemp"; chmod +x "$T/bin/mktemp"
 
+# worktree 的 .git 是要留著的檔案；monorepo 子目錄沒有 .git，就退查共同的 gitdir。
+# 要在跑假 mktemp 前決定檢查對象，否則 worktree 的 .git 被刪後會誤落到還存在的 common dir。
+if [ -e "$R/.git" ]; then
+  GCK="$R/.git"
+else
+  GCK="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  [ -n "$GCK" ] || GCK="$(git -C "$R" rev-parse --git-common-dir 2>/dev/null)"
+  case "$GCK" in /*) ;; *) GCK="$R/$GCK" ;; esac
+fi
+
 for f in dcq_isolation_test.sh dcq_models_job_test.sh; do
   [ -f "$D/$f" ] || { chk "找到 $f" no yes; continue; }
   before="$(git -C "$R" status --porcelain 2>/dev/null)"
@@ -22,7 +32,7 @@ for f in dcq_isolation_test.sh dcq_models_job_test.sh; do
   chk "${f}：repo 檔案沒有多也沒有少" "$(git -C "$R" status --porcelain 2>/dev/null | sort | md5 -q 2>/dev/null || true)" \
     "$(printf '%s' "$before" | sort | md5 -q 2>/dev/null || true)"
   # 破除假 mktemp 之後不能有東西被刪：repo 還是同一份 git 樹
-  chk "${f}：repo 根目錄還在" "$([ -d "$R/.git" ] && echo yes)" "yes"
+  chk "${f}：repo gitdir 還在" "$([ -e "$GCK" ] && echo yes)" "yes"
 done
 
 # 對照：真 mktemp 時隔離測試照常跑（證明上面非 0 是假 mktemp 造成的，不是本測試本身壞）

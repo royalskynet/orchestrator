@@ -26,7 +26,8 @@ echo "IN $n $DC_FREE_MODEL" >> "$TRACE"
 [ "$n" = verify ] && echo "dc: 驗收 → fake"
 out=1500; cost=0.8
 [ "$n" = job ] && out=600
-case "$cwd" in */.bon/*) out=600 ;; esac
+# BON 三隻各自的 out_tok 要不同：合計 600+700+800=2100，只算勝出者或漏加任一隻都驗得出來
+case "$cwd" in */.bon/*) case "$DC_FREE_MODEL" in w1) out=600 ;; w2) out=700 ;; *) out=800 ;; esac ;; esac
 [ "$DC_FREE_MODEL" = m2 ] && [ "$n" != job ] && { out=0; cost=0; }
 sqlite3 "$DCQ_OC_DB" "INSERT INTO session VALUES ('$sid','$cwd',$ms); INSERT INTO message VALUES ('$sid','$sid',$ms,$ms,'{\"role\":\"assistant\",\"cost\":$cost,\"tokens\":{\"output\":$out,\"reasoning\":0}}');"
 if [ "$n:$DC_FREE_MODEL" = overlap:m1 ]; then
@@ -35,6 +36,13 @@ if [ "$n:$DC_FREE_MODEL" = overlap:m1 ]; then
   done
 fi
 if [ "$n:$DC_FREE_MODEL" = job:m1 ]; then sleep 2; exit 1; fi
+# BONWIN：w2 1 秒勝出，w1／w3 睡 10 秒注定是被殺的落選者，強制走 oc_usage 補計路徑。
+if grep -q BONWIN "$1"; then
+  case "$cwd:$DC_FREE_MODEL" in
+    */.bon/*:w2) sleep 1; echo w2 > "$cwd/out.txt"; echo "OUT $n $DC_FREE_MODEL" >> "$TRACE"; exit 0 ;;
+    */.bon/*:w1|*/.bon/*:w3) sleep 10; echo "OUT $n $DC_FREE_MODEL" >> "$TRACE"; exit 1 ;;
+  esac
+fi
 sleep 3
 echo "OUT $n $DC_FREE_MODEL" >> "$TRACE"
 case "$cwd" in */.bon/*) exit 1 ;; esac
@@ -50,6 +58,7 @@ cat > "$T/bin/wo-verify" <<'SH'
 case "$*" in *--dry*) exit 0 ;; esac
 n="$(basename "$1" .md)"
 [ "$n" = vok ] && exit 0
+[ -f out.txt ] && exit 0   # BON 勝出者套回 cwd 後的正向驗收
 grep -q "^OUT $n " "$TRACE"
 SH
 chmod +x "$T/bin/wo-verify"
@@ -108,6 +117,18 @@ printf '%s\tm1\t0\t0\texit\t2\tmid\t1\t0\t0\n' "$(date +%F_%T)" >> "$DCQ_HOME/lo
 DCQ_RANK_WIN=1 DCQ_TOK_MAX=1000 DCQ_MODELS=m1 dcq rank > "$T/rank"
 chk "視窗外不警告" "$(grep -c '⚠.*out_tok' "$T/rank")" 0
 # 沿用 dcq_bon_test 的清冊與暫存 git repo，驗證 BON 增量也計入整張預算。
+# 假 mv：job 檔搬進 failed/ 時把主工單 preflight 的 tok_used 抄出來——結案 rm -rf 會刪，
+# 這是能直接驗 bon_total 合計落點的最後窗口（#36）
+export BONCAP="$T/bon_tok_used"
+cat > "$T/bin/mv" <<'SH'
+#!/bin/sh
+case "$2" in */failed/*.job|*/done/*.job)
+  pf="${DCQ_HOME}/.preflight/$(basename "$2" .job)"
+  [ -f "$pf/tok_used" ] && cp "$pf/tok_used" "$BONCAP" ;;
+esac
+exec /bin/mv "$@"
+SH
+chmod +x "$T/bin/mv"
 mkdir -p "$T/cat"
 for m in strong:any w1:easy w2:easy w3:easy; do
   printf 'free\topencode-run\t%s\tok\tx\tx\t%s\t%s\n' "${m%%:*}" "${m%%:*}" "${m#*:}" >> "$T/cat/models.tsv"
@@ -120,7 +141,26 @@ echo $(( $(date +%s) + 3600 )) > "$DCQ_HOME/.health/strong.cool"
 DCQ_CATALOG="$T/cat" DCQ_JOB_TOK_MAX=1000 dcq add "$T/bon.md" "$T/bonrepo" hard >/dev/null
 DCQ_CATALOG="$T/cat" dcq run -j 1 > "$T/bon.log" 2>&1
 chk "BON 合計超限進 failed" "$(ls "$DCQ_HOME/failed" | grep -c -- '-bon.job')" 1
+# 主工單 tok_used＝三隻各自 out_tok 的合計（600+700+800）：只算勝出者或漏加任一隻都不是這個數
+chk "BON tok_used＝三隻合計" "$(cat "$T/bon_tok_used" 2>/dev/null)" 2100
 grep -q 'token 預算用完' "$T/bon.log" || { echo 'FAIL BON 缺少預算訊息'; cat "$T/bon.log"; fail=1; }
+# #36 補缺口：勝出者存在時落選者會被殺，沒有 .res／tok_used 收尾，只能靠 oc_usage 補計；
+# 同場景 seed tok_used=100 當前一嘗試留下的共同基數。正確合計＝100＋600＋700＋800＝2200；
+# 落選者補計寫 0 會得 800，不扣共同基數會得 2300，只算勝出者也不是 2200。
+printf '# BONWIN baseline\n' > "$T/bonwin.md"
+rm -f "$T/bon_tok_used"
+: > "$TRACE"
+bonwin_id="$(DCQ_CATALOG="$T/cat" DCQ_JOB_TOK_MAX=3000 dcq add "$T/bonwin.md" "$T/bonrepo" hard 2>/dev/null)"
+mkdir -p "$DCQ_HOME/.preflight/$bonwin_id"
+printf '100\n' > "$DCQ_HOME/.preflight/$bonwin_id/tok_used"
+DCQ_CATALOG="$T/cat" dcq run -j 1 > "$T/bonwin.log" 2>&1
+chk "BONWIN 進 done" "$(ls "$DCQ_HOME/done" | grep -c -- '-bonwin.job')" 1
+chk "BONWIN 勝出者 w2" "$(awk -F= '/^BON=/{print $2}' "$DCQ_HOME"/done/*bonwin.job 2>/dev/null)" w2
+chk "BONWIN w2 完成" "$(grep -c 'OUT .* w2' "$TRACE")" 1
+chk "BONWIN w1 被殺未完成" "$(grep -c 'OUT .* w1' "$TRACE")" 0
+chk "BONWIN w3 被殺未完成" "$(grep -c 'OUT .* w3' "$TRACE")" 0
+chk "BONWIN 勝出改動套回" "$(cat "$T/bonrepo/out.txt" 2>/dev/null)" w2
+chk "BON tok_used＝基數一次＋三隻合計" "$(cat "$T/bon_tok_used" 2>/dev/null)" 2200
 [ "$fail" = 0 ] && echo PASS
 [ "$fail" = 0 ] || cat "$T/job.log"
 exit "$fail"

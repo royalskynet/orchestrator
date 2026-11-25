@@ -114,6 +114,13 @@ rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計�
     # 全池故障（10-27）：同一個 10 分鐘桶裡出事（quota／upstream／卡住）的不同模型數，跨難度算。
     # 10-25 03:58–05:13 Zen 全 quota、Go 訂閱全掛，opencode-go/beam-free 那段卡 8 次被算成自己停滯 80% 降懲罰層。
     $5~/^(quota|upstream|stall|slow|spin|loop|budget)$/ { bk=substr($1,1,15); if (!((bk,$2) in BM)) { BM[bk,$2]=1; NB[bk]++ } }
+    # #35：PASS 列（rc=0）的 out_tok 依難度收集，表格尾段印 DCQ_TOK_MAX 建議值。
+    # 第 7 欄空的舊紀錄跟排名同規則——算進每個難度；0／空欄不算樣本。放在 tier 過濾之前，
+    # 不分 `dcq rank` 給不給難度，三個難度都照整份 gaps.tsv 算。
+    $4==0 && $8+0>0 { tt=$7
+      if (tt=="" || tt=="easy") TOK["easy",++TOKN["easy"]]=$8+0
+      if (tt=="" || tt=="mid")  TOK["mid", ++TOKN["mid"]] =$8+0
+      if (tt=="" || tt=="hard") TOK["hard",++TOKN["hard"]]=$8+0 }
     # 第 7 欄＝工單難度（2026-10-19 起）：別的難度的紀錄不算；舊紀錄沒有這欄，算進每個難度
     tier!="" && $7!="" && $7!=tier { next }
     $4==0 && $3+0>pgmax { pgmax=$3+0; pgm=$2 }
@@ -221,6 +228,23 @@ rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計�
         print "冷宮（兜底層之後、訂閱層之前）：" zero
         if (tokmax>0 && ptmax>=0.9*tokmax) printf "⚠ 成功嘗試最大 out_tok %.0f（%s）已逼近 DCQ_TOK_MAX=%.0f，門檻可能太緊會誤殺\n", ptmax, ptm, tokmax
         if (pgmax >= 0.9*stall) printf "⚠ 成功工單最大靜默 %ds（%s）已逼近 STALL_S=%d，門檻可能太緊會誤殺\n", pgmax, pgm, stall
+        # #35：各難度 PASS out_tok 的 n／p50／p95 與建議值 ceil(p95×1.25)——只印建議、不自動套用。
+        # 百分位同 #29 建議上限那套：插入排序後 nearest-rank 取第 ceil(q×n) 個。整份舊格式（無第 8 欄）不印。
+        if (has8) {
+          print "DCQ_TOK_MAX 建議值（各難度 PASS 的 out_tok，p95×1.25 無條件進位；只印建議不自動套用）："
+          split("easy mid hard", TNL, " ")
+          for (ti=1; ti<=3; ti++) {
+            tname=TNL[ti]; tn=TOKN[tname]+0
+            if (tn<min) { printf "  %-4s 樣本不足（n=%d <DCQ_RANK_MIN=%d）\n", tname, tn, min; continue }
+            for (a=2; a<=tn; a++) { v=TOK[tname,a]; b=a-1; while (b>=1 && TOK[tname,b]>v) { TOK[tname,b+1]=TOK[tname,b]; b-- } TOK[tname,b+1]=v }
+            ix=int(0.5*tn); if (ix<0.5*tn) ix++
+            p50=TOK[tname,ix]
+            ix=int(0.95*tn); if (ix<0.95*tn) ix++
+            p95=TOK[tname,ix]
+            adv=int(p95*1.25); if (adv<p95*1.25) adv++
+            printf "  %-4s n=%d p50=%d p95=%d 建議 DCQ_TOK_MAX=%d\n", tname, tn, p50, p95, adv
+          }
+        }
       } else if (mode=="amax") {
         for (i=1; i<=nm; i++) printf "%s\t%d\n", L[i], CAP[i]   # 給程式用：每行「model<TAB>建議上限秒數」
       } else print out "|" pen "|" zero
@@ -1118,12 +1142,15 @@ zero_output() {  # $1=opencode export JSON；是＝rc 0
 # 存 <out 去掉 .out>.stall.json（遮罩、600）並把一行摘要印到 stderr 與 stalls.tsv。
 # 找不到 session、opencode 失敗都只略過：診斷不能拖累派工。
 stall_dump() {
-  local out="$1" cwd="$2" ta="$3" model="$4" sid js sum
+  local out="$1" cwd="$2" ta="$3" model="$4" sid js sum d dp
   [ "${DCQ_STALL_DUMP:-1}" = 1 ] || return 0
   js="${out%.out}.stall.json"
+  # opencode 存的 directory 是解析過符號連結的實體路徑（macOS /tmp → /private/tmp）；兩種寫法都比（同 oc_usage）
+  d="$(cd "$cwd" 2>/dev/null && pwd)"
+  dp="$(cd "$cwd" 2>/dev/null && pwd -P)"
   sid=$(cd "$cwd" 2>/dev/null && timeout 20 opencode session list --format json -n 10 2>/dev/null \
-    | jq -r --arg d "$(cd "$cwd" && pwd)" --argjson t "$(( ta * 1000 ))" \
-      '[.[] | select(.directory == $d and .created >= $t)] | sort_by(.created) | last | .id // empty' 2>/dev/null)
+    | jq -r --arg d "$d" --arg dp "$dp" --argjson t "$(( ta * 1000 ))" \
+      '[.[] | select((.directory == $d or .directory == $dp) and .created >= $t)] | sort_by(.created) | last | .id // empty' 2>/dev/null)
   [ -n "$sid" ] || { echo "dcq: stall_dump 找不到 session（${model}）" >&2; return 0; }
   ( umask 077; cd "$cwd" && timeout 30 opencode export "$sid" > "$js" 2>/dev/null ) || { rm -f "$js"; return 0; }
   zero_output "$js" && STALL_UPSTREAM=1
@@ -1712,7 +1739,13 @@ wt_reason() {
 # 舊 schema 撞「no such column: project_id」全滅（fm-harness P0 實測 10 張單）。是快取不是資料，
 # 建立 worktree 時清掉讓 opencode 重建；代價是 project 關聯的舊 session 列表重開。
 oc_git_cache_gc() {  # $1=任一 repo 內路徑
-  local gd; gd="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  local d gd
+  d="$(cd "$1" 2>/dev/null && pwd -P)" || return 0
+  # --git-common-dir 對普通 repo 回相對路徑（".git"），要轉絕對再比（976799a 沒轉，gc 從未生效）；
+  # --path-format=absolute（git≥2.31）拿不到就手動接 repo 根
+  gd="$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+    || gd="$(git -C "$d" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  case "$gd" in /*) ;; *) gd="$d/$gd" ;; esac
   [ -f "$gd/opencode" ] && { rm -f "$gd/opencode"; echo "dcq: 清掉 .git/opencode 快取（worktree 相容）" >&2; }
 }
 # 收掉一個 worktree；$4=keep 保留分支（衝突時給人看），否則連分支一起刪
@@ -1885,7 +1918,14 @@ cmd_run() {
   # 兩個 runner 就會同一張工單跑兩次。ponytail: 檢查與寫入非原子，兩個 run 同一毫秒啟動才會漏。
   local rp; rp="$(cat "$Q/.runner.pid" 2>/dev/null || true)"
   [ -n "$rp" ] && [ "$rp" != $$ ] && kill -0 "$rp" 2>/dev/null && die "dcq: 已有 runner 在跑（pid ${rp}）"
-  echo $$ > "$Q/.runner.pid"; trap 'rm -f "$Q/.runner.pid"' EXIT
+  echo $$ > "$Q/.runner.pid"
+  # 訊號紀錄（issue #14）：runner 被殺要留證。tmux kill-server→HUP、dcq 外部 TERM、ctrl-c INT
+  # 都記進 logs/runner-signals.log（時間、訊號、pid、ppid）；EXIT 也記（收工 rc 還是 128+n）。
+  rsig() { printf '%s\t%s\tpid=%s\tppid=%s\n' "$(date +%F_%T)" "$1" "$$" "$PPID" >> "$Q/logs/runner-signals.log" 2>/dev/null; }
+  trap 'rsig TERM; exit 143' TERM
+  trap 'rsig HUP;  exit 129' HUP
+  trap 'rsig INT;  exit 130' INT
+  trap 'rsig "EXIT rc=$?"; rm -f "$Q/.runner.pid"' EXIT
   # 上一輪被 kill 會留下孤兒：running/ 裡的 job 與沒人持有的 cwdlock。
   # ponytail: 無人重跑 run 就沒人清，開機時無腦全收；同時只准一個 dcq run 在跑。
   for f in "$Q"/running/*.job; do [ -e "$f" ] && { wt_restore_job "$f"; mv "$f" "$Q/pending/"; }; done
@@ -2229,7 +2269,8 @@ usage() {
   DCQ_COST_MAX       單次 cost 上限，可用小數（預設 0＝關）
   DCQ_JOB_TOK_MAX    整張工單所有嘗試的 out_tok 合計上限（預設 0＝關），用完停止換模型
                      三項入列時記進工單；每 DCQ_TOK_POLL_S 輪詢，進驗收後不判；why=budget
-                     單次超限跟 spin 同路冷卻換手；dcq rank 在 PASS out_tok 近 TOK_MAX 時警告
+                     單次超限跟 spin 同路冷卻換手；dcq rank 在 PASS out_tok 近 TOK_MAX 時警告，
+                     表格尾段另印各難度 PASS out_tok 的 n／p50／p95 與 ceil(p95×1.25) 建議值（只印不套用）
   DCQ_MASK           .out 遮罩器（預設 repo 的 bin/mask-transcript.mjs）
   DCQ_OC_DB          opencode 本機 db 路徑，gaps.tsv 第 8–10 欄 token／cost 的來源
                      （預設 $XDG_DATA_HOME/opencode/opencode.db，測試與非預設安裝用）

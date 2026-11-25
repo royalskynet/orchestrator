@@ -64,6 +64,9 @@ if [ "$dry" -eq 1 ]; then printf '%s\n' "$script" | bash -n; exit $?; fi
 # 逾時可調：dc 的 do-nothing 負向對照在派工前跑同一支腳本，不該為此等 10 分鐘。
 timeout "${WO_VERIFY_TIMEOUT:-600}" bash -c "$(printf 'set -e\ntrap '\''echo "wo-verify FAIL line $((LINENO-1)): $BASH_COMMAND"'\'' ERR\n%s\n' "$script")" </dev/null 2>&1
 rc=$?
+# 驗收指令自己回 2／3 不能原樣上傳（issue #10）：2＝工單契約錯、3＝竄改是這支腳本自己的語意，
+# 原樣上傳會讓 dcq 把普通驗收失敗誤判成 FATAL 不重試／判篡改。收成 1，原始 rc 留在 log。
+case $rc in 2|3) echo "--- wo-verify rc=${rc}（驗收指令自回，映射為 1）"; rc=1 ;; esac
 echo "--- wo-verify rc=$rc"
 exit "$rc"
 }
