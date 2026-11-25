@@ -16,6 +16,7 @@ export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"   # 不�
 export DCQ_FREE_ROUNDS=1 DCQ_POOL_PAID="" DCQ_POOL_TAIL=""
 # 本檔測 default 鏈（派o）；dcq 未設時預設也是 default（10-21 改，原 free 見 fixindex 11106），沒給的預設由 dcq_tier_test 5b 測
 export DCQ_ORDER=default
+export DCQ_AUTOSTART=0
 
 # 假 dc：記下 (cwd, 進出時間, model)，依任務檔名決定 rc
 cat > "$T/bin/dc" <<'EOF'
@@ -57,7 +58,7 @@ chmod +x "$T/bin/opencode"
 printf '#!/bin/sh\nexit 0\n' > "$T/bin/deep-lint"; chmod +x "$T/bin/deep-lint"
 # 假 wo-verify：--dry（入列閘）一律過；jmf*／slow* 工單的正式驗收不過（10、10a'、16b 要的是
 # 「總時限到且沒交件」；總時限到但驗收過的新路徑由 16a 用 jm1 測）
-printf '#!/bin/sh\ncase "$*" in *--dry*) exit 0 ;; *jmf*|*slow*) exit 1 ;; esac\nexit 0\n' > "$T/bin/wo-verify"; chmod +x "$T/bin/wo-verify"
+printf '#!/bin/sh\ncase "$*" in *--dry*) exit 0 ;; *jmf*|*slow*|*hang*|*spin*|*busy*) exit 1 ;; esac\nexit 0\n' > "$T/bin/wo-verify"; chmod +x "$T/bin/wo-verify"
 
 mk() { printf '# %s\n' "$1" > "$T/$1.md"; dcq add "$T/$1.md" "$2" >/dev/null || echo "add failed: $1"; }
 dcq() { "$(cd "$(dirname "$0")/.." && pwd)/bin/dcq" "$@"; }

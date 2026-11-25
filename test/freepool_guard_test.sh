@@ -90,6 +90,13 @@ o="$(bin/freepool-guard daily "$T/ok.tsv" 2>&1)"; rc=$?
 echo '{"kilo/poolside/laguna-s-2.1:free":{"at":"x","status":"error"}}' > "$FREEPOOL_PROBED"
 has "daily 探過的不重探" "沒有新的零價 kilo 模型" "$(bin/freepool-guard daily "$T/ok.tsv" 2>&1)"
 chk "daily guard 擋照樣回 1" 1 daily "$T/paid.tsv"
+# 查無 kilo id 自動下架；付費列仍拒派且保留。
+printf 'free\topencode-run\tkilo/gone:free\tok\ttest\tgone\tkilo/gone:free\tany\n' > "$T/gone.tsv"
+chk "daily 查無 id 自動下架" 0 daily "$T/gone.tsv"
+if [ ! -s "$T/gone.tsv" ]; then echo "PASS 下架列已移除"; else echo "FAIL 下架列仍在"; fail=1; fi
+cp "$T/paid.tsv" "$T/paid-before.tsv"
+chk "daily 漲價仍擋" 1 daily "$T/paid.tsv"
+cmp -s "$T/paid.tsv" "$T/paid-before.tsv" && echo "PASS 漲價列未靜默刪除" || { echo "FAIL 漲價列被刪"; fail=1; }
 unset OMNIROUTE_URL OMNIROUTE_ADMIN_PASSWORD FREEPOOL_PROBED
 
 # 沒快取又連不上上游：不得宣告任何模型免費（fail-closed）

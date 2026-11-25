@@ -4,7 +4,9 @@
 set -u
 . "$(dirname "$0")/env.sh"
 R="$(cd "$(dirname "$0")/.." && pwd)"
-T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+T="$(mktemp -d)" || exit 1; [ -d "$T" ] || exit 1; cd "$T" || exit 1
+# 清理只碰 mktemp 拿到、非空、在暫存區、且不是 repo 的路徑（mktemp／cd 失敗時絕不 rm 到 repo）
+trap '[ -n "$T" ] && [ -d "$T" ] && [ "$T" != "$R" ] && case "$T" in "${TMPDIR:-/tmp}"*|/tmp/*|/var/folders/*) rm -rf "$T" ;; esac' EXIT
 T="$(cd "$T" && pwd -P)"
 export DCQ_HOME="$T/q" DC_BIN="$T/bin" PATH="$T/bin:$PATH"
 export DC_FREECHECK=off DC_NEGCTL=0 DCQ_POLL_S=1 DCQ_AUTORANK=0 DCQ_POOLSYNC=0 DCQ_GO_STATE="$T/none.json"

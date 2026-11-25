@@ -183,5 +183,51 @@ done
 for m in hh hh kk kk; do rowd "$m" 0 60; done
 pen="$(DCQ_MODELS= DCQ_POOL_ZEN="hh kk" DCQ_POOL_GO="" dcq rank | sed -n 's/^懲罰層（免費層之後）：//p')"
 [ "$pen" = "kk" ] || { echo "FAIL outage stall: got pen [$pen] want [kk]"; fail=1; }
+# 12) issue #29：逐模型建議上限＝視窗 PASS 秒數 p95×1.25 夾 [DCQ_ATTEMPT_FLOOR, DCQ_ATTEMPT_MAX]（預設 240–600）；
+#     視窗 PASS <RANK_MIN 用全域；分難度算；DCQ_ATTEMPT_AUTO=0 時表格沒有上限欄
+: > "$G"; : > "$P"
+for i in $(seq 11); do printf '%s\tmA\t10\t0\texit\t100\tmid\n' "$D" >> "$G"; done
+printf '%s\tmA\t10\t0\texit\t400\tmid\n' "$D" >> "$G"                    # mA mid：12 過、p95=400 → 500
+for i in $(seq 12); do printf '%s\tmA\t10\t0\texit\t900\teasy\n' "$D" >> "$G"; done   # easy 的 900s 不該混進 mid
+for i in 1 2 3; do printf '%s\tmB\t10\t0\texit\t60\tmid\n' "$D" >> "$G"; done         # mB：3 過 <RANK_MIN → 全域
+DCQBIN="$(cd "$(dirname "$0")/.." && pwd)/bin/dcq"   # 新欄位驗這個 repo 的版本（PATH 的 dcq 指向另一個安裝）
+out="$(DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank mid)"
+got="$(printf '%s\n' "$out" | awk '$1=="mA"{print $NF}')"
+[ "$got" = "500s" ] || { echo "FAIL amax mA mid: got [$got] want [500s]"; fail=1; }
+got="$(printf '%s\n' "$out" | awk '$1=="mB"{print $NF}')"
+[ "$got" = "600s" ] || { echo "FAIL amax mB mid: got [$got] want [600s]"; fail=1; }
+got="$(DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank easy | awk '$1=="mA"{print $NF}')"
+[ "$got" = "600s" ] || { echo "FAIL amax mA easy: got [$got] want [600s]"; fail=1; }   # 900×1.25=1125 夾到 600
+got="$(DCQ_ATTEMPT_AUTO=0 DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank mid | awk '$1=="model"{print $NF}')"
+[ "$got" = "狀態" ] || { echo "FAIL AUTO=0 表格仍有上限欄: header last=[$got]"; fail=1; }
+# 13) issue #30：tok/pass、cost/pass＝含失敗與被殺嘗試的合計 ÷ PASS；舊紀錄缺第 8 欄不算
+#     tA：8 過各 1000 out_tok＋2 敗各 5000 → tok/pass=18000/8=2250；cost=(8×0.01+2×0.05)/8=0.0225
+#     只算 PASS 列會得 1000／0.0100，這樣寫才分得出來
+: > "$G"; : > "$P"
+rowt() { printf '%s\t%s\t10\t%s\t%s\t%s\t\t%s\t0\t%s\n' "$D" "$1" "$2" "$3" "$4" "$5" "$6" >> "$G"; }
+for i in $(seq 8); do rowt tA 0 exit 60 1000 0.01; done
+for i in 1 2; do rowt tA 1 exit 60 5000 0.05; done
+for i in 1 2 3; do rowt tB 0 exit 60 800 0.02; done          # tB：有 token 的樣本 3 <RANK_MIN → -
+out="$(DCQ_MODELS= DCQ_POOL_ZEN="tA tB" DCQ_POOL_GO="" "$DCQBIN" rank)"
+got="$(printf '%s\n' "$out" | awk '$1=="tA"{print $(NF-1)}')"
+[ "$got" = "2250" ] || { echo "FAIL tok/pass tA: got [$got] want [2250]"; fail=1; }
+got="$(printf '%s\n' "$out" | awk '$1=="tA"{print $NF}')"
+[ "$got" = "0.0225" ] || { echo "FAIL cost/pass tA: got [$got] want [0.0225]"; fail=1; }
+got="$(printf '%s\n' "$out" | awk '$1=="tB"{print $(NF-1)"/"$NF}')"
+[ "$got" = "-/-" ] || { echo "FAIL tok/cost tB: got [$got] want [-/-]"; fail=1; }
+# 14) 全舊格式（無第 8 欄）→ 表格逐字同改動前：標題列不含新欄
+: > "$G"
+for i in $(seq 10); do rowd r1 0 100; done
+hdr="$(DCQ_MODELS= DCQ_POOL_ZEN="r1" DCQ_POOL_GO="" "$DCQBIN" rank | grep '^model')"
+exp="$(printf '%-34s %4s %4s %4s %6s %8s %7s  %s %4s' model n pass stall pass% est probe 狀態 上限)"
+[ "$hdr" = "$exp" ] || { echo "FAIL old-format header: got [$hdr] want [$exp]"; fail=1; }
+# 15) DCQ_RANK_PAID=cost：p/fast 每 PASS 10s 但 0.10 成本 vs p/slow 100s 但 0.01 → 秒數序 fast 前、成本序 slow 前
+: > "$G"
+for i in $(seq 10); do rowt p/fast 0 exit 10 2000 0.10; done
+for i in $(seq 10); do rowt p/slow 0 exit 100 2000 0.01; done
+got="$(DCQ_MODELS= DCQ_POOL_ZEN="a" DCQ_POOL_PAID="p/fast p/slow" DCQ_POOL_TAIL="" "$DCQBIN" rank | sed -n 's/^訂閱層：//p')"
+[ "$got" = "p/fast p/slow" ] || { echo "FAIL paid default order: got [$got] want [p/fast p/slow]"; fail=1; }
+got="$(DCQ_RANK_PAID=cost DCQ_MODELS= DCQ_POOL_ZEN="a" DCQ_POOL_PAID="p/fast p/slow" DCQ_POOL_TAIL="" "$DCQBIN" rank | sed -n 's/^訂閱層：//p')"
+[ "$got" = "p/slow p/fast" ] || { echo "FAIL paid cost order: got [$got] want [p/slow p/fast]"; fail=1; }
 [ "$fail" = 0 ] && echo PASS
 exit "$fail"

@@ -44,11 +44,14 @@ esac
 case "$n:$DC_FREE_MODEL" in
   tool1:m1) "$XB/opencode" -c 'sleep 8; :' ;;
   idle1:m1) sleep 8 ;;
+  idle1:m2) : > "$2/WORKED" ;;
 esac
 exit 0
 EOF
   chmod +x "$T/bin/dc"
-  for g in deep-lint wo-verify; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$g"; chmod +x "$T/bin/$g"; done
+  # wo-verify 看見真做過才算過（F4 殺前驗收）：idle1:m1 被殺時沒留 WORKED → 驗收失敗才會換 m2
+  printf '#!/bin/sh\nexit 0\n' > "$T/bin/deep-lint"; chmod +x "$T/bin/deep-lint"
+  printf '#!/bin/sh\ncase "$2" in --dry*) exit 0;; esac\ntest -f WORKED\n' > "$T/bin/wo-verify"; chmod +x "$T/bin/wo-verify"
 
   local chk why rc
   chk() { if [ "$2" = "$3" ]; then echo "PASS [$case] $1"; else echo "FAIL [$case] $1: got '$2' want '$3'"; fail=1; fi; }

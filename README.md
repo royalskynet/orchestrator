@@ -265,6 +265,15 @@ dcq 的停滯判定只看 `.out` 有沒有輸出。模型一直講話卻不改�
 - `.out` 出現 `dc: 驗收 →` 之後不看，慢驗收不會被誤殺。
 - 唯讀工單（只產報告到 cwd 外）在 git cwd 裡跑超過 420s 會被誤殺：入列時帶 `DCQ_SPIN_S=0 dcq add ...`，這張就不看（記成工單的 `SPIN=0`）。
 - 產出寫在 cwd 內被 `.gitignore` 擋掉的路徑（如 `state/`、`workorders/`）的工單不要切 worktree（merge 帶不回，worktree 一刪產出就沒了）：入列時帶 `DCQ_WORKTREE=0 dcq add ...`，記成工單的 `NOWT=1`，這張照舊在同目錄序列跑。
+- `logs/gaps.tsv` 每次嘗試加記第 8–10 欄：`out_tok`（output＋reasoning）、`in_tok`（input＋cache.read＋cache.write）、`cost`（#26）。來源是 opencode 本機 `opencode.db`（`DCQ_OC_DB` 可改路徑）：取「directory=cwd 且建立於這次嘗試之後的最新 session」加總它的 assistant 訊息。查不到 session 或查詢失敗留空欄，不影響派工；`dcq rank` 以第 8 欄校準 token 近邊警告，舊紀錄缺欄視為 0，新舊紀錄可並存。
+
+token／金額預算熔斷（#27）預設全關。`DCQ_TOK_MAX` 限制單次 output＋reasoning token，`DCQ_COST_MAX` 限制單次 cost（可用小數），`DCQ_JOB_TOK_MAX` 限制整張工單所有嘗試的 out_tok 合計；0＝關。入列時記進 `TOKMAX`／`COSTMAX`／`JOBTOKMAX`，逐張覆寫。與繞圈偵測共用 `DCQ_TOK_POLL_S` 輪詢點，每次查一次 `oc_usage`；三項全關就不做預算輪詢。進驗收後不判。超限記 `why=budget`：單次上限跟 spin 同路殺掉、冷卻換模型；整張合計用完直接 failed（rc=124），停止換模型。`dcq rank` 在視窗內 PASS 最大 out_tok ≥ 0.9×`DCQ_TOK_MAX` 時警告；先累積 token 資料再校準門檻。
+
+再補一道繞圈偵測（#28）：反覆呼叫同一個工具（無限 Glob／Read，[opencode#50678](https://github.com/anomalyco/opencode/issues/50678)）一直有輸出，stall／spin 都可能抓不到。watchdog 每 `DCQ_TOK_POLL_S`（預設 30）秒查 `opencode.db` 的 `part` 表：該 session 最近 `DCQ_LOOP_WIN`（預設 10）筆工具呼叫裡，不同簽章（工具名＋`state.input` 的 JSON）≤ `DCQ_LOOP_UNIQ`（預設 2）就判繞圈。`DCQ_LOOP` 預設 `shadow`：只寫一行 `logs/loops.tsv`（時間、模型、session、工具名、次數）不殺，跑一週對照最終結果、誤判率可接受再改預設 `kill`——kill 記 `why=loop`，跟 spin 同路罰冷卻換手；`0` 關。視窗期間工作樹有變過（連跑同一條測試指令）豁免；查不到 session（非 opencode 執行人）自然不判。
+
+逐模型嘗試上限（#29）：全域 `DCQ_ATTEMPT_MAX` 對快模型太寬——實測一份 gaps.tsv 的 PASS 嘗試 p50=94s、p95=527s，快模型白等近 10 分鐘才判 slow。`dcq rank` 每列多一欄「上限」＝該模型（該難度）視窗 `DCQ_RANK_WIN` 內 PASS 秒數的 p95×1.25，夾在 `DCQ_ATTEMPT_FLOOR`（預設 240）與 `DCQ_ATTEMPT_MAX` 之間；視窗 PASS 數 < `DCQ_RANK_MIN` 的模型用全域值。`DCQ_ATTEMPT_AUTO` 預設 `hint`：只顯示建議值、watchdog 仍用全域；`1` 時 watchdog 判 slow 改用各模型的建議上限（查不到退回全域；`PROGRESS_S` 內有改檔照舊豁免）；`0` 連表格也不顯示。
+
+每 PASS token／成本（#30）：免費層的成本是等待時間，付費層的成本是錢——便宜但常失敗的模型，把失敗的花費算進去不一定划算。`dcq rank` 表格在 gaps.tsv 有第 8–10 欄時多 `tok/pass`、`cost/pass` 兩欄：視窗內（含失敗與被殺，過濾規則同秒數）嘗試的 `out_tok`／`cost` 合計 ÷ PASS 數；有 token 的樣本 < `DCQ_RANK_MIN` 或 0 PASS 顯示 `-`，全是舊格式紀錄時不加欄。`DCQ_RANK_PAID=cost` 時訂閱層層內改用平滑後 `cost/pass` 排序（先驗 `DCQ_RANK_PRIOR_K` 次、全池平均當先驗，同 est 形式），缺 token 資料的退回秒數序；預設空＝照秒數。免費層主排序不變。
 
 ### 清冊與難度分層（2026-10-19）
 
@@ -309,7 +318,7 @@ freepool-guard propose catalog/models.tsv   # 對清冊提增刪建議（只印�
 - 派os 的 CLI 訂閱層：codex → claude。Codex 使用 ChatGPT 訂閱；`CODEX_BIN` 或 PATH 上的 `codex` 不可用時跳過。Claude：`sub` 且 `dc_id` 為 `claude/*`（目前 `claude/claude-haiku-5-5`），只在 `DCQ_ORDER=sub`（派os）排最後、API 前；派o／派of 不派。dc 經 `bin/claude-exec` 叫 `claude -p`（claude.ai 訂閱額度，與主 session 共用，provider 上限 1）。不能加 `--bare`（只認 API key＝按量計費）；`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` 有設時 bypassPermissions 會被降級，所以工具用 `--allowedTools` 明列。`DCQ_POOL_CLAUDE=` 關掉。
 - API 層：`api`，`DCQ_ALLOW_API=1` 才接，預設不用。
 
-兜底層與訂閱層也做層內排序（2026-10-21），規則同免費層：依每 PASS 秒數升冪，停滯率過高或 0 PASS 的墊該層最後，樣本不足留原位。只在層內排，不跨層搬。`DCQ_MODELS` 有設或 `DCQ_AUTORANK=0` 就不排。
+兜底層與訂閱層也做層內排序（2026-10-21），規則同免費層：依每 PASS 秒數升冪，停滯率過高或 0 PASS 的墊該層最後，樣本不足留原位。只在層內排，不跨層搬。`DCQ_MODELS` 有設或 `DCQ_AUTORANK=0` 就不排。`DCQ_RANK_PAID=cost` 時訂閱層改依每 PASS 成本排（#30）。
 
 ### 額度用完、免費池縮水（2026-10-25）
 
@@ -383,7 +392,7 @@ Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`s
 **免費 → 懲罰層 → 兜底層 → 冷宮 → 訂閱（opencode-go，付費，2026-10-13 起墊底）**。會過但常卡的還值得試；0 PASS 的排在兜底層前面，等於每張工單替它白等 200–600s。
 最近一筆樣本超過 `DCQ_RANK_PAROLE_D`（預設 7）天就假釋回免費層重新給機會。`dcq rank` 列出目前的懲罰層與冷宮。
 
-免費層第 2 輪（`DCQ_FREE_ROUNDS`）只重試上游失敗的模型；已經跑到驗收、或 stall／slow／spin 的，本單不再給第二次（2026-10-22：wo-r1 同一隻 minimax 連跑 245s＋1021s）。
+免費層第 2 輪（`DCQ_FREE_ROUNDS`）只重試上游失敗的模型；已經跑到驗收、或 stall／slow／spin／loop 的，本單不再給第二次（2026-10-22：wo-r1 同一隻 minimax 連跑 245s＋1021s）。
 
 排序分數＝貝氏平滑後的每 PASS 秒數：`(總秒數＋K×全池平均秒數)／(PASS 數＋K×全池通過率)`，`K=DCQ_RANK_PRIOR_K`（預設 2，0＝原始 s/pass）。樣本少的往全池平均拉，所以不必再靠手排位置保護，manual 與 ranked 一起排。借鏡 LiteLLM latency-based routing 與 Beta-Bernoulli 先驗（arXiv 1707.02038）；Thompson sampling 等樣本夠再上。
 探測批次比某隻最近一次 PASS 還舊時，`probe` 欄標 `stale`，不當 down（10-19 整池 403 那批）。

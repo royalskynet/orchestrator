@@ -101,40 +101,56 @@ PROBE_MAX_H="${DCQ_PROBE_MAX_H:-192}"  # 2026-10-21：探測 10-20 起每 7 天�
 # 假釋：最近一筆樣本超過 RANK_PAROLE_D 天就回免費層 manual 位置重給機會——放到訂閱層後面
 # 幾乎不會被試到，不假釋就永遠累積不到新樣本翻身。
 RANK_PAROLE_D="${DCQ_RANK_PAROLE_D:-7}"
-rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計表；$3=tier（空＝不分難度）
+rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計表；$3=tier（空＝不分難度）；$4=排序鍵（cost＝依每 PASS 成本，空＝秒數）
   local f="$Q/logs/gaps.tsv"; [ -s "$f" ] || f=/dev/null
   local pf="$Q/logs/probe.tsv"; [ -s "$pf" ] || pf=/dev/null
   local cut; cut="$(date -v-"${PROBE_MAX_H}"H +%F_%T 2>/dev/null || date -d "-${PROBE_MAX_H} hours" +%F_%T)"
   local pc; pc="$(date -v-"${RANK_PAROLE_D}"d +%F_%T 2>/dev/null || date -d "-${RANK_PAROLE_D} days" +%F_%T)"
   awk -F'\t' -v order="$1" -v min="$RANK_MIN" -v win="$RANK_WIN" -v sp="$RANK_STALL_PCT" \
-      -v zn="$RANK_ZERO_N" -v mode="${2:-order}" -v pf="$pf" -v cut="$cut" -v pc="$pc" -v stall="${STALL_S:-200}" -v tier="${3:-}" -v pk="$RANK_PRIOR_K" -v ob="$RANK_OUTAGE_N" '
+      -v zn="$RANK_ZERO_N" -v mode="${2:-order}" -v pf="$pf" -v cut="$cut" -v pc="$pc" -v stall="${STALL_S:-200}" -v tier="${3:-}" -v pk="$RANK_PRIOR_K" -v ob="$RANK_OUTAGE_N" -v sortk="${4:-}" \
+      -v afloor="${DCQ_ATTEMPT_FLOOR:-240}" -v amaxv="${DCQ_ATTEMPT_MAX:-600}" -v tokmax="${DCQ_TOK_MAX:-0}" -v auto="${DCQ_ATTEMPT_AUTO:-hint}" '
     # QUOTA＝額度用完（08:00 重置），不是壞，當沒資料
     FILENAME==pf { if ($1>=cut && $4!="QUOTA") { if ($1>pl) pl=$1; PT[$1,$3]=PT[$1,$3] (PT[$1,$3]=="" ? "" : ",") $4 ":" $5 } next }
     # 全池故障（10-27）：同一個 10 分鐘桶裡出事（quota／upstream／卡住）的不同模型數，跨難度算。
     # 10-25 03:58–05:13 Zen 全 quota、Go 訂閱全掛，opencode-go/beam-free 那段卡 8 次被算成自己停滯 80% 降懲罰層。
-    $5~/^(quota|upstream|stall|slow|spin)$/ { bk=substr($1,1,15); if (!((bk,$2) in BM)) { BM[bk,$2]=1; NB[bk]++ } }
+    $5~/^(quota|upstream|stall|slow|spin|loop|budget)$/ { bk=substr($1,1,15); if (!((bk,$2) in BM)) { BM[bk,$2]=1; NB[bk]++ } }
     # 第 7 欄＝工單難度（2026-10-19 起）：別的難度的紀錄不算；舊紀錄沒有這欄，算進每個難度
     tier!="" && $7!="" && $7!=tier { next }
     $4==0 && $3+0>pgmax { pgmax=$3+0; pgm=$2 }
-    { m=$2; LT[m]=$1; k=++cnt[m]; R[m,k]=$4; W[m,k]=$5; D[m,k]=($6!="" ? $6 : $3); BK[m,k]=substr($1,1,15); if ($4==0) LP[m]=$1 }
+    { m=$2; LT[m]=$1; k=++cnt[m]; T[m,k]=$8; C[m,k]=$10; R[m,k]=$4; W[m,k]=$5; D[m,k]=($6!="" ? $6 : $3); BK[m,k]=substr($1,1,15); if ($4==0) LP[m]=$1; if ($8!="") has8=1 }
     END {
       nm=split(order, L, " ")
       for (i=1; i<=nm; i++) {
-        m=L[i]; n=0; p=0; s=0; d=0; st=cnt[m]-win+1; if (st<1) st=1
+        m=L[i]; n=0; p=0; s=0; d=0; kn=0; kt=0; kc=0; kp=0; st=cnt[m]-win+1; if (st<1) st=1
         for (k=st; k<=cnt[m]; k++) { if (R[m,k]==2 || W[m,k]=="upstream" || W[m,k]=="quota") continue
-          if (W[m,k]~/^(stall|slow|spin)$/ && NB[BK[m,k]]-1>=ob) continue   # 同桶 ≥ob 隻別的模型也出事＝上游故障
-          n++; d+=D[m,k]; if (R[m,k]==0) p++; if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin") s++ }
-        N[i]=n; P[i]=p; S[i]=s; DS[i]=d; pr[i]=(n ? p/n : 0); tn+=n; tp+=p; td+=d
+          if (W[m,k]~/^(stall|slow|spin|loop|budget)$/ && NB[BK[m,k]]-1>=ob) continue   # 同桶 ≥ob 隻別的模型也出事＝上游故障
+          n++; d+=D[m,k]; if (R[m,k]==0) { p++; PD[m,p]=D[m,k]; if (T[m,k]+0>ptmax) { ptmax=T[m,k]+0; ptm=m } } if (W[m,k]=="stall" || W[m,k]=="slow" || W[m,k]=="spin" || W[m,k]=="loop" || W[m,k]=="budget") s++
+          if (T[m,k]!="") { kn++; kt+=T[m,k]+0; kc+=C[m,k]+0; if (R[m,k]==0) kp++ } }   # 第 8 欄空的舊紀錄不算；分子含失敗與被殺的嘗試
+        N[i]=n; P[i]=p; S[i]=s; DS[i]=d; TKN[i]=kn; TKT[i]=kt; TKC[i]=kc; TKP[i]=kp; pr[i]=(n ? p/n : 0); tn+=n; tp+=p; td+=d; gtn+=kn; gtc+=kc; gtp+=kp
       }
       # 貝氏平滑（2026-10-22）：每隻先加 pk 次「全池平均」的虛擬嘗試（平均秒數 mu_d、平均通過率 mu_p），
       # 估計值＝(總秒數＋pk×mu_d)／(PASS 數＋pk×mu_p)。樣本多的幾乎不變，樣本少的往全池平均拉，
       # 12 跑 8 過、71s 的模型才比得過 30 跑 17 過的。全池沒有 PASS 時退回原始 s/pass。
       # 借鏡 LiteLLM latency-based routing 的移動平均＋Beta 先驗；Thompson sampling 仍照 ponytail 延後。
       mu_d=(tn ? td/tn : 0); mu_p=(tn ? tp/tn : 0)
+      mu_c=(gtn ? gtc/gtn : 0); mu_cp=(gtn ? gtp/gtn : 0)   # 全池：有 token 的嘗試的平均成本、通過率（#30 成本排序的先驗）
       for (i=1; i<=nm; i++) {
         m=L[i]; n=N[i]; p=P[i]; s=S[i]; d=DS[i]
         if (pk>0 && mu_p>0) sp_[i]=(d+pk*mu_d)/(p+pk*mu_p); else sp_[i]=(p ? d/p : 1e9)
         sc[i]=-sp_[i]   # 分數越大越前：每 PASS 秒數取負
+        # 每 PASS 成本（#30）：與 est 同形式的貝氏平滑，分子含失敗與被殺嘗試的成本；資料不足顯示 -、排序退回秒數
+        if (pk>0 && mu_cp>0) estc[i]=(TKC[i]+pk*mu_c)/(TKP[i]+pk*mu_cp); else estc[i]=(TKP[i] ? TKC[i]/TKP[i] : 1e9)
+        CQ[i]=(TKN[i]>=min && TKP[i]>0)
+        # 逐模型建議上限（issue #29）：視窗內 PASS 嘗試秒數的 p95×1.25，夾在 [afloor,amaxv]；
+        # 過濾跟上面 n/p 同一套（rc=2、upstream、quota、全池故障桶、難度都已扣掉）。
+        # p95 用 nearest-rank：插入排序後取第 ceil(0.95×p) 個。視窗 PASS 數 <RANK_MIN 用全域 amaxv。
+        cap=amaxv
+        if (p>=min && p>0) {
+          for (a=2; a<=p; a++) { v=PD[m,a]; b=a-1; while (b>=1 && PD[m,b]>v) { PD[m,b+1]=PD[m,b]; b-- } PD[m,b+1]=v }
+          ix=int(0.95*p); if (ix<0.95*p) ix++
+          cap=int(PD[m,ix]*1.25+0.5); if (cap<afloor) cap=afloor; if (cap>amaxv) cap=amaxv
+        }
+        CAP[i]=cap
         st_="manual"
         if (zn>0 && n>=zn && p==0) st_="zero"   # 短路：一張都沒過，不等 RANK_MIN
         else if (n>=min) { if (s*100>=sp*n) st_="demoted"; else st_="ranked" }
@@ -162,6 +178,13 @@ rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計�
       if (pk>0 && mu_p>0) { for (a=1; a<=nmq; a++) q[++nq]=mq[a]; nmq=0; for (i=1; i<=nm; i++) if (tag[i]=="manual") tag[i]="ranked" }
       # 合格者依每 PASS 秒數升冪（同分維持手排順序；插入排序，n 很小）
       for (a=2; a<=nq; a++) { x=q[a]; b=a-1; while (b>=1 && sc[q[b]]<sc[x]) { q[b+1]=q[b]; b-- } q[b+1]=x }
+      # sortk=cost（#30，訂閱層 DCQ_RANK_PAID=cost）：有 cost/pass 的依平滑成本升冪排前，沒有的維持秒數順序排後
+      if (sortk=="cost" && nq>1) {
+        nc=0; nr=0
+        for (a=1; a<=nq; a++) { if (CQ[q[a]]) cq[++nc]=q[a]; else rq[++nr]=q[a] }
+        for (a=2; a<=nc; a++) { x=cq[a]; b=a-1; while (b>=1 && estc[cq[b]]>estc[x]) { cq[b+1]=cq[b]; b-- } cq[b+1]=x }
+        nq=0; for (a=1; a<=nc; a++) q[++nq]=cq[a]; for (a=1; a<=nr; a++) q[++nq]=rq[a]
+      }
       for (a=2; a<=nd; a++) { x=dm[a]; b=a-1; while (b>=1 && sc[dm[b]]<sc[x]) { dm[b+1]=dm[b]; b-- } dm[b+1]=x }
       out=""; j=0; jm=0
       for (i=1; i<=nm; i++) {
@@ -173,14 +196,33 @@ rank_free() {  # $1=手排順序（空白分隔）；$2 mode=table 時印統計�
       pen=""; for (a=1; a<=nd; a++) pen=pen (pen?" ":"") L[dm[a]]
       zero=""; for (a=1; a<=nz; a++) zero=zero (zero?" ":"") L[zz[a]]
       if (mode=="table") {
-        printf "%-34s %4s %4s %4s %6s %8s %7s  %s\n", "model", "n", "pass", "stall", "pass%", "est", "probe", "狀態"
-        for (i=1; i<=nm; i++) printf "%-34s %4d %4d %4d %5.0f%% %8s %7s  %s\n", L[i], N[i], P[i], S[i], pr[i]*100, (sp_[i]<1e9 ? sprintf("%.0f", sp_[i]) : "-"), (ps[i]=="ok" ? sprintf("%.0fs", pok[i]) : (ps[i]=="" ? "-" : ps[i])), tag[i]
+        # tok/pass、cost/pass（#30）：含失敗與被殺嘗試的合計 ÷ PASS；有 token 的樣本 <min 或 0 PASS 顯示 -。
+        # 整份 gaps.tsv 都是舊格式（無第 8 欄）就不加這兩欄，輸出與加欄前逐字相同。
+        for (i=1; i<=nm; i++) { tkv[i]=(CQ[i] ? sprintf("%.0f", TKT[i]/TKP[i]) : "-"); tcv[i]=(CQ[i] ? sprintf("%.4f", TKC[i]/TKP[i]) : "-") }
+        if (auto!="0") {
+          if (has8) printf "%-34s %4s %4s %4s %6s %8s %7s  %s %4s %8s %9s\n", "model", "n", "pass", "stall", "pass%", "est", "probe", "狀態", "上限", "tok/pass", "cost/pass"
+          else printf "%-34s %4s %4s %4s %6s %8s %7s  %s %4s\n", "model", "n", "pass", "stall", "pass%", "est", "probe", "狀態", "上限"
+          for (i=1; i<=nm; i++)
+            if (has8) printf "%-34s %4d %4d %4d %5.0f%% %8s %7s  %s %4ds %8s %9s\n", L[i], N[i], P[i], S[i], pr[i]*100, (sp_[i]<1e9 ? sprintf("%.0f", sp_[i]) : "-"), (ps[i]=="ok" ? sprintf("%.0fs", pok[i]) : (ps[i]=="" ? "-" : ps[i])), tag[i], CAP[i], tkv[i], tcv[i]
+            else printf "%-34s %4d %4d %4d %5.0f%% %8s %7s  %s %4ds\n", L[i], N[i], P[i], S[i], pr[i]*100, (sp_[i]<1e9 ? sprintf("%.0f", sp_[i]) : "-"), (ps[i]=="ok" ? sprintf("%.0fs", pok[i]) : (ps[i]=="" ? "-" : ps[i])), tag[i], CAP[i]
+        } else {
+          if (has8) printf "%-34s %4s %4s %4s %6s %8s %7s  %s %8s %9s\n", "model", "n", "pass", "stall", "pass%", "est", "probe", "狀態", "tok/pass", "cost/pass"
+          else printf "%-34s %4s %4s %4s %6s %8s %7s  %s\n", "model", "n", "pass", "stall", "pass%", "est", "probe", "狀態"
+          for (i=1; i<=nm; i++)
+            if (has8) printf "%-34s %4d %4d %4d %5.0f%% %8s %7s  %s %8s %9s\n", L[i], N[i], P[i], S[i], pr[i]*100, (sp_[i]<1e9 ? sprintf("%.0f", sp_[i]) : "-"), (ps[i]=="ok" ? sprintf("%.0fs", pok[i]) : (ps[i]=="" ? "-" : ps[i])), tag[i], tkv[i], tcv[i]
+            else printf "%-34s %4d %4d %4d %5.0f%% %8s %7s  %s\n", L[i], N[i], P[i], S[i], pr[i]*100, (sp_[i]<1e9 ? sprintf("%.0f", sp_[i]) : "-"), (ps[i]=="ok" ? sprintf("%.0fs", pok[i]) : (ps[i]=="" ? "-" : ps[i])), tag[i]
+        }
         if (pl!="") print "探測批次：" pl
+        else print "探測：無新鮮批次（排程實打探測 2026-10-24 起停用；手動 oc-probe probe 可補）"
         printf "est＝平滑後每 PASS 秒數（先驗 %s 次，全池平均 %.0fs／次、通過率 %.0f%%）\n", pk, mu_d, mu_p*100
+        if (has8) print "tok/pass、cost/pass＝視窗內（含失敗與被殺）嘗試的 out_tok／cost 合計 ÷ PASS"
         print "順序：" out
         print "懲罰層（免費層之後）：" pen
         print "冷宮（兜底層之後、訂閱層之前）：" zero
+        if (tokmax>0 && ptmax>=0.9*tokmax) printf "⚠ 成功嘗試最大 out_tok %.0f（%s）已逼近 DCQ_TOK_MAX=%.0f，門檻可能太緊會誤殺\n", ptmax, ptm, tokmax
         if (pgmax >= 0.9*stall) printf "⚠ 成功工單最大靜默 %ds（%s）已逼近 STALL_S=%d，門檻可能太緊會誤殺\n", pgmax, pgm, stall
+      } else if (mode=="amax") {
+        for (i=1; i<=nm; i++) printf "%s\t%d\n", L[i], CAP[i]   # 給程式用：每行「model<TAB>建議上限秒數」
       } else print out "|" pen "|" zero
     }' "$pf" "$f"
 }
@@ -398,13 +440,15 @@ fp_part() { local m o=""; for m in $1; do case "$m" in opencode-go/*) continue ;
 OO_PROVS="${DCQ_OO_PROVS-nvidia nvidia2 nvidia3 openrouter openrouter2 agnes}"   # 設空字串＝oo 派不到任何模型
 oo_part() { local m o=""; for m in $1; do case " $OO_PROVS " in *" ${m%%/*} "*) o="$o${o:+ }$m" ;; esac; done; echo "$o"; }
 oc_first() { echo $(oc_part "$1") $(fp_part "$1"); }
-rank_layer() {  # $1=該層手排順序（空白分隔）；印接回來的完整順序：懲罰、0 PASS 依序墊該層最後
+rank_layer() {  # $1=該層手排順序（空白分隔）；$2=排序鍵（cost＝依每 PASS 成本）；印接回來的完整順序：懲罰、0 PASS 依序墊該層最後
   local r o p z
-  r="$(rank_free "$1")"; o="${r%%|*}"; r="${r#*|}"; p="${r%%|*}"; z="${r#*|}"
+  r="$(rank_free "$1" order "" "${2:-}")"; o="${r%%|*}"; r="${r#*|}"; p="${r%%|*}"; z="${r#*|}"
   echo $o $p $z   # 不加引號：順便收掉空段造成的多餘空白
 }
 if [ -z "${DCQ_MODELS:-}" ] && [ "${DCQ_AUTORANK:-1}" != 0 ]; then
-  POOL_TAIL="$(rank_layer "$POOL_TAIL")"; POOL_PAID="$(rank_layer "$POOL_PAID")"
+  # DCQ_RANK_PAID=cost（#30）：訂閱層層內改用「每 PASS 成本」排序；缺 token 資料的退回秒數序。免費層不動。
+  _rk=""; [ "${DCQ_RANK_PAID:-}" = cost ] && _rk=cost
+  POOL_TAIL="$(rank_layer "$POOL_TAIL")"; POOL_PAID="$(rank_layer "$POOL_PAID" "$_rk")"
 fi
 # API 層（按量扣錢）：訂閱層之後，DCQ_ALLOW_API=1 才用；清冊 billing=api 且有 dc_id 的列。預設不開。
 POOL_API=""; [ "${DCQ_ALLOW_API:-0}" = 1 ] && POOL_API="${DCQ_POOL_API-$(cat_pool api slash) $(cat_pool api zen)}"
@@ -437,11 +481,34 @@ JOB_MAX="${DCQ_JOB_MAX:-2700}"; JOB_MAX_G="$JOB_MAX"       # 整張工單（含�
 # 研究類工單（逐頁抓原文存檔）單次常超過 600s，硬切會丟掉模型已讀的上下文、換下一隻重讀。
 ATTEMPT_MAX="${DCQ_ATTEMPT_MAX:-600}"
 PROGRESS_S="${DCQ_PROGRESS_S:-300}"
+# 逐模型單次嘗試上限（issue #29）：gaps.tsv 顯示全域 600 對快模型太寬（PASS p50=94s 也要等滿 600 才判 slow）。
+# 建議值＝該模型（該難度）視窗 PASS 秒數 p95×1.25，夾在 [DCQ_ATTEMPT_FLOOR（預設 240）, ATTEMPT_MAX]；
+# 視窗 PASS 數 <RANK_MIN 用全域值。DCQ_ATTEMPT_AUTO：hint＝dcq rank 顯示建議值、watchdog 仍用全域（預設，
+# 先觀察一週再改 1）；1＝watchdog 直接套用（查不到該模型用全域）；0＝連表格也不顯示。
+# AUTO=1 時啟動算一次：三個難度各一份「model<TAB>秒數」給 watch_oc 查，不每個輪詢重算。
+ATTEMPT_FLOOR="${DCQ_ATTEMPT_FLOOR:-240}"
+ATTEMPT_AUTO="${DCQ_ATTEMPT_AUTO:-hint}"
+AMAX_easy="" AMAX_mid="" AMAX_hard=""
+if [ "$ATTEMPT_AUTO" = 1 ]; then
+  _ap="${MODELS_MANUAL:-$MODELS} $POOL_TAIL $POOL_PAID $POOL_CLAUDE $POOL_API"
+  AMAX_easy="$(rank_free "$_ap" amax easy)"; AMAX_mid="$(rank_free "$_ap" amax mid)"; AMAX_hard="$(rank_free "$_ap" amax hard)"
+fi
 # 防空轉：模型一直講話卻不改檔（讀檔繞圈、反覆重試同一招）不觸發 STALL_S，要等 ATTEMPT_MAX。
 # cwd 是 git 工作樹時，這次嘗試 SPIN_S 秒內 HEAD＋改動＋未追蹤檔都沒變 → why=spin，跟 stall 一樣罰冷卻換手。
 # 進驗收（.out 出現「dc: 驗收 →」）就不再看，慢驗收不會被誤殺。0＝關；入列時 DCQ_SPIN_S 會記進工單，可逐張關。
 # ponytail: 唯讀工單（只產報告到 cwd 外）在 git cwd 裡跑超過 SPIN_S 會被誤殺；這類工單入列帶 DCQ_SPIN_S=0。
 SPIN_S="${DCQ_SPIN_S:-420}"
+# 重複工具呼叫（issue #28）：模型反覆打同一招（無限 Glob/Read，opencode#50678）一直有輸出，
+# 不觸發 stall；讀檔不改檔要等 SPIN_S，中間有零星改檔連 spin 都不會中。改查 opencode.db 的
+# part 表：這個 session 最近 LOOP_WIN 筆 type=tool 的呼叫裡，不同簽章（tool 名＋state.input
+# 的 JSON 字串）≤LOOP_UNIQ 就算繞圈。視窗期間工作樹指紋有變過（連跑同一條測試指令）豁免。
+# 每 TOK_POLL_S 查一次，不每個 POLL_S 都查；.out 出現「dc: 驗收 →」後不查；查不到 session
+# （非 opencode 執行人）自然不判。DCQ_LOOP=shadow 只記一行 logs/loops.tsv 不殺（預設：
+# 跑一週對照這些嘗試的最終結果，誤判率可接受再改預設 kill）；kill＝記 why=loop 跟 spin 同路；0＝關。
+LOOP="${DCQ_LOOP:-shadow}"
+LOOP_WIN="${DCQ_LOOP_WIN:-10}"; LOOP_UNIQ="${DCQ_LOOP_UNIQ:-2}"
+TOK_MAX="${DCQ_TOK_MAX:-0}"; COST_MAX="${DCQ_COST_MAX:-0}"; JOB_TOK_MAX="${DCQ_JOB_TOK_MAX:-0}"
+TOK_POLL_S="${DCQ_TOK_POLL_S:-30}"
 POLL_S="${DCQ_POLL_S:-5}"
 # .out 是模型 transcript 原文，可能有憑證：先建 600 空檔、跑完遮罩、過期刪除（issue #5）
 # 遮罩器隨 repo 走（2026-10-24）：原本指 ~/.claude/tools，雲端 clone 沒有那支，遮罩每次失敗、.out 留原文。
@@ -972,6 +1039,9 @@ cmd_add() {
   [ "${DCQ_WORKTREE:-1}" = 0 ] && { echo "NOWT=1" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
   # 逐張預算（研究類長工單用，2026-10-21）：JOBMAX＝這張的總時限；SAT＝連續幾次嘗試 cwd 沒有新產出就停
   [ -n "${DCQ_JOB_MAX:-}" ] && { echo "JOBMAX=$DCQ_JOB_MAX" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
+  [ -n "${DCQ_TOK_MAX:-}" ] && { echo "TOKMAX=$DCQ_TOK_MAX" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
+  [ -n "${DCQ_COST_MAX:-}" ] && { echo "COSTMAX=$DCQ_COST_MAX" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
+  [ -n "${DCQ_JOB_TOK_MAX:-}" ] && { echo "JOBTOKMAX=$DCQ_JOB_TOK_MAX" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
   [ -n "${DCQ_SAT_N:-}" ] && { echo "SAT=$DCQ_SAT_N" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
   if [ -n "${DCQ_PREFER:-}" ]; then
     echo "PREFER=$DCQ_PREFER" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }
@@ -1067,16 +1137,91 @@ stall_dump() {
   echo "dcq: stall_dump $model $sid 最後一則[role done tools reasoning字數]=${sum}" >&2
 }
 
-# 跑一隻模型並盯著它。印 "<rc> <why>"，why ∈ exit|stall|slow|spin|jobmax。
+# 這次嘗試燒了多少 token／錢（issue #26）：印 "out_tok in_tok cost"，查不到就印空、rc 0。
+# out_tok＝output＋reasoning；in_tok＝input＋cache.read＋cache.write。
+# 資料源＝opencode 本機 db（非公開契約，升版可能改）：跟 stall_dump 同條件找 session
+# （directory=cwd、time_created ≥ta、取最新一個），加總它所有 assistant 訊息（id 是主鍵，
+# 天然去重）。db 不在、找不到 session、sqlite 失敗都退回空欄——診斷不能拖累派工；
+# 查詢失敗另在 stderr 印一行。DCQ_OC_DB 可覆寫路徑（測試與非預設安裝用）。
+oc_usage() {
+  local cwd="$1" ta="$2" db d dp sid
+  db="${DCQ_OC_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}"
+  [ -r "$db" ] || return 0
+  command -v sqlite3 >/dev/null 2>&1 || return 0
+  d="$(cd "$cwd" 2>/dev/null && pwd)" || return 0
+  [ -n "$d" ] || return 0
+  d=${d//\'/\'\'}   # SQL 跳脫：' → ''（雙引號內的 ${x//\'/\'\'} 在 bash 3.2 replacement 會留字面 \）
+  # opencode 存的 directory 是解析過符號連結的實體路徑（macOS /tmp → /private/tmp）；兩種寫法都比
+  dp="$(cd "$cwd" 2>/dev/null && pwd -P)"; dp=${dp//\'/\'\'}
+  sid="$(sqlite3 -readonly -cmd '.timeout 2000' "$db" \
+    "SELECT id FROM session WHERE directory IN ('$d','$dp') AND time_created>=$(( ta * 1000 )) ORDER BY time_created DESC LIMIT 1" 2>/dev/null)" \
+    || { echo "dcq: oc_usage 查 session 失敗（db=${db}）" >&2; return 0; }
+  [ -n "$sid" ] || return 0
+  sid=${sid//\'/\'\'}
+  sqlite3 -readonly -cmd '.timeout 2000' "$db" \
+    "SELECT IFNULL(SUM(IFNULL(json_extract(data,'$.tokens.output'),0)+IFNULL(json_extract(data,'$.tokens.reasoning'),0)),0)||' '||IFNULL(SUM(IFNULL(json_extract(data,'$.tokens.input'),0)+IFNULL(json_extract(data,'$.tokens.cache.read'),0)+IFNULL(json_extract(data,'$.tokens.cache.write'),0)),0)||' '||IFNULL(SUM(IFNULL(json_extract(data,'$.cost'),0)),0) FROM message WHERE session_id='$sid' AND json_valid(data) AND json_extract(data,'$.role')='assistant'" 2>/dev/null \
+    || { echo "dcq: oc_usage 加總失敗（db=${db} sid=${sid}）" >&2; return 0; }
+}
+
+# 這次嘗試的 opencode session id：directory=cwd、time_created ≥ta 的最新一個（跟 oc_usage 同條件）。
+# 查不到／db 不在／sqlite 沒有都印空、rc 0——非 opencode 執行人自然查不到，不影響派工。
+oc_session() {
+  local cwd="$1" ta="$2" db d dp
+  db="${DCQ_OC_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}"
+  [ -r "$db" ] || return 0
+  command -v sqlite3 >/dev/null 2>&1 || return 0
+  d="$(cd "$cwd" 2>/dev/null && pwd)" || return 0
+  [ -n "$d" ] || return 0
+  d=${d//\'/\'\'}   # SQL 跳脫（同 oc_usage）：' → ''
+  # opencode 存的 directory 是解析過符號連結的實體路徑（macOS /tmp → /private/tmp）；兩種寫法都比
+  dp="$(cd "$cwd" 2>/dev/null && pwd -P)"; dp=${dp//\'/\'\'}
+  sqlite3 -readonly -cmd '.timeout 2000' "$db" \
+    "SELECT id FROM session WHERE directory IN ('$d','$dp') AND time_created>=$(( ta * 1000 )) ORDER BY time_created DESC LIMIT 1" 2>/dev/null \
+    || { echo "dcq: oc_session 查失敗（db=${db}）" >&2; return 0; }
+}
+
+# 同一招工具反覆打（issue #28）：最新 session 最近 LOOP_WIN 筆 type=tool 的 part 裡，
+# 不同簽章（tool 名＋state.input 的 JSON 字串）數 ≤LOOP_UNIQ 就算繞圈；命中印
+# 「最多的簽章出現次數<TAB>工具名」，否則印空。不足 LOOP_WIN 筆不判（剛開跑）。
+# $3 since_epoch＝工作樹指紋最後變動時間（watch_oc 的 chg_t）：視窗最早那筆 part 的
+# 時間之前/同秒樹有動過＝這輪重複有在改檔（連跑同一條測試指令），豁免不判。
+oc_loop() {
+  local cwd="$1" ta="$2" since="${3:-0}" db sid row ng tot mx e ltool
+  db="${DCQ_OC_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}"
+  sid="$(oc_session "$cwd" "$ta")"
+  [ -n "$sid" ] || return 0
+  sid=${sid//\'/\'\'}
+  row="$(sqlite3 -readonly -cmd '.timeout 2000' "$db" \
+    "WITH w AS (SELECT json_extract(data,'$.tool') t, json_extract(data,'$.state.input') i, time_created tc FROM part WHERE session_id='$sid' AND json_valid(data) AND json_extract(data,'$.type')='tool' ORDER BY tc DESC LIMIT $LOOP_WIN), g AS (SELECT t, COUNT(*) c, MIN(tc) e FROM w GROUP BY t, i) SELECT (SELECT COUNT(*) FROM g)||'|'||(SELECT SUM(c) FROM g)||'|'||(SELECT MAX(c) FROM g)||'|'||(SELECT MIN(e) FROM g)||'|'||IFNULL((SELECT t FROM g ORDER BY c DESC LIMIT 1),'')" 2>/dev/null)" \
+    || { echo "dcq: oc_loop 查 part 失敗（db=${db} sid=${sid}）" >&2; return 0; }
+  IFS='|' read -r ng tot mx e ltool <<<"$row"
+  [ -n "$tot" ] && [ "$tot" -ge "$LOOP_WIN" ] || return 0
+  [ "$ng" -le "$LOOP_UNIQ" ] || return 0
+  [ "$since" -gt 0 ] && [ $(( ${e:-0} / 1000 )) -le "$since" ] && return 0
+  printf '%s\t%s\n' "$mx" "$ltool"
+}
+
+# 跑一隻模型並盯著它。印 "<rc> <why>"，why ∈ exit|stall|slow|spin|loop|budget|jobmax。
 # 判活看 .out 的 mtime：opencode 每完成一個 part 就寫一行。dc 收尾的 wo-verify 期間
 # 也算在內——驗收指令本身若靜默超過 STALL_S 會被誤判，STALL_S 要比最慢的驗收寬。
 watch_oc() {
   local id="$1" model="$2" task="$3" cwd="$4" t0="$5" paid="$6" out pid rc why=exit gap maxgap=0 t ta
-  local spin_s="${JOB_SPIN_S:-$SPIN_S}" sig="" sig_t s alive=0 tp chg_t=0
+  local spin_s="${JOB_SPIN_S:-$SPIN_S}" sig="" sig_t s alive=0 tp chg_t=0 loop_done=0 loop_tp ll
+  local u_out u_in u_cost used=0 budget_on=0 budget_done=0 budget_limit=""
+  mkdir -p "$DC_PREFLIGHT_DIR"
+  [ -r "$DC_PREFLIGHT_DIR/tok_used" ] && read -r used < "$DC_PREFLIGHT_DIR/tok_used"
+  awk -v t="$TOK_MAX" -v c="$COST_MAX" -v j="$JOB_TOK_MAX" 'BEGIN { exit !(t>0 || c>0 || j>0) }' && budget_on=1
   ta=$(now)  # 這次嘗試的起點（t0 是整張工單的起點），算每隻模型實際花的秒數
-  sig_t=$ta; tp=$ta
+  sig_t=$ta; tp=$ta; loop_tp=$ta
   git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || spin_s=0
   sig="$(tree_sig "$cwd")"
+  # 逐模型上限（issue #29）：AUTO=1 用啟動算好的建議值；查不到（層外模型、樣本不足）退回全域
+  local amax="$ATTEMPT_MAX" _al _a
+  if [ "$ATTEMPT_AUTO" = 1 ]; then
+    case "${JOB_TIER:-mid}" in easy) _al="$AMAX_easy" ;; hard) _al="$AMAX_hard" ;; *) _al="$AMAX_mid" ;; esac
+    _a="$(printf '%s\n' "$_al" | awk -F'\t' -v m="$model" '$1==m{print $2; exit}')"
+    [ -n "$_a" ] && amax="$_a"
+  fi
   out="$Q/logs/$id.$(fk "$model").out"
   # 先建 600 空檔：底下的 `> "$out"` 只截斷不改權限，沒先建的話 .out 會吃預設 umask（644）
   ( umask 077; : > "$out" )
@@ -1096,16 +1241,49 @@ watch_oc() {
     [ "$gap" -gt "$maxgap" ] && maxgap=$gap
     s="$(tree_sig "$cwd")"
     [ "$s" != "$sig" ] && { sig=$s; sig_t=$t; chg_t=$t; }
-    if [ "$gap" -ge "$STALL_S" ]; then why=stall
+    # 預算與繞圈偵測共用 TOK_POLL_S 輪詢；進驗收後不再查。
+    # 命中先記一行 logs/loops.tsv（shadow 也只到這）；LOOP=kill 才把 why 設成 loop，走下面同路殺掉。
+    if [ $(( t - loop_tp )) -ge "$TOK_POLL_S" ]; then
+      loop_tp=$t
+      if grep -q '^dc: 驗收 → ' "$out" 2>/dev/null; then loop_done=1; budget_done=1; fi
+      if [ "$budget_on" = 1 ] && [ "$budget_done" = 0 ]; then
+        read -r u_out u_in u_cost <<<"$(oc_usage "$cwd" "$ta")"
+        budget_limit="$(awk -v t="$TOK_MAX" -v c="$COST_MAX" -v j="$JOB_TOK_MAX" -v o="${u_out:-0}" -v cost="${u_cost:-0}" -v used="$used" 'BEGIN {
+          if (j>0 && used+o>j) printf "JOBTOKMAX 用量 %.0f／上限 %.0f", used+o,j
+          else if (t>0 && o>t) printf "TOKMAX 用量 %.0f／上限 %.0f",o,t
+          else if (c>0 && cost>c) printf "COSTMAX 用量 %s／上限 %s",cost,c
+        }')"
+        if [ -n "$budget_limit" ]; then
+          why=budget
+          echo "dcq[$id] watchdog: $model budget（${budget_limit}），殺掉" >&2
+          case "$budget_limit" in JOBTOKMAX*) : > "$DC_PREFLIGHT_DIR/tok_exhausted" ;; esac
+        fi
+      fi
+      if [ "$LOOP" != 0 ] && [ "$loop_done" = 0 ]; then
+        ll="$(oc_loop "$cwd" "$ta" "$chg_t")"
+        if [ -n "$ll" ]; then
+          loop_done=1
+          printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%F_%T)" "$model" "$(oc_session "$cwd" "$ta")" "${ll#*	}" "${ll%%	*}" >> "$Q/logs/loops.tsv"
+          [ "$LOOP" = kill ] && [ "$why" != budget ] && why=loop
+        fi
+      fi
+    fi
+    if [ "$why" = budget ] || [ "$why" = loop ] || [ "$gap" -ge "$STALL_S" ]; then
+      case "$why" in budget|loop) ;; *) why=stall ;; esac
     elif [ $(( t - t0 )) -ge "$JOB_MAX" ]; then why=jobmax
-    elif [ $(( t - ta )) -ge "$ATTEMPT_MAX" ] && { [ "$chg_t" = 0 ] || [ $(( t - chg_t )) -ge "$PROGRESS_S" ]; }; then why=slow
+    elif [ $(( t - ta )) -ge "$amax" ] && { [ "$chg_t" = 0 ] || [ $(( t - chg_t )) -ge "$PROGRESS_S" ]; }; then why=slow
     elif [ "$spin_s" -gt 0 ]; then
       if grep -q '^dc: 驗收 → ' "$out" 2>/dev/null; then spin_s=0; continue; fi
       [ $(( t - sig_t )) -ge "$spin_s" ] || continue
       why=spin
       echo "dcq[$id] watchdog: $model 空轉（$(( t - sig_t ))s 沒改任何檔，cwd=${cwd}）" >&2
     else continue; fi
-    echo "dcq[$id] watchdog: $model ${why}（${gap}s 無輸出／本次已跑 $(( t - ta ))s，整張 $(( t - t0 ))s），殺掉" >&2
+    if [ "$why" = budget ]; then :
+    elif [ "$why" = loop ]; then
+      echo "dcq[$id] watchdog: $model loop（${ll#*	} 同簽章連打 ${ll%%	*} 次／最近 ${LOOP_WIN} 筆，本次已跑 $(( t - ta ))s，cwd=${cwd}），殺掉" >&2
+    else
+      echo "dcq[$id] watchdog: $model ${why}（${gap}s 無輸出／本次已跑 $(( t - ta ))s，整張 $(( t - t0 ))s），殺掉" >&2
+    fi
     STALL_UPSTREAM=0; [ "$why" = stall ] && stall_dump "$out" "$cwd" "$ta" "$model"
     [ "$STALL_UPSTREAM" = 1 ] && { why=upstream; echo "dcq[$id] $model 整段 0 輸出，判上游不回（額度／排隊），不記模型的帳" >&2; }
     killtree "$pid"; break
@@ -1119,7 +1297,13 @@ watch_oc() {
     elif grep -qE '^dc: (上游限流|上游不可用|Zen 免費閘道判濫用)' "$out" 2>/dev/null; then why=upstream; fi
   fi
   # 每次都記最大靜默間隔（STALL_S 的唯一校準依據）與這次嘗試的總秒數（自動重排的時間成本）
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F_%T)" "$model" "$maxgap" "$rc" "$why" "$(( $(now) - ta ))" "${JOB_TIER:-}" >> "$Q/logs/gaps.tsv"
+  # 第 8–10 欄（issue #26）：out_tok、in_tok、cost——查不到 session／查詢失敗留空，
+  # rank_free 用第 8 欄校準 token 近邊警告；舊紀錄缺欄視為 0。
+  read -r u_out u_in u_cost <<<"$(oc_usage "$cwd" "$ta")"
+  if [ -n "${u_out:-}" ]; then
+    awk -v used="$used" -v out="$u_out" 'BEGIN { printf "%.0f\n", used+out }' > "$DC_PREFLIGHT_DIR/tok_used"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F_%T)" "$model" "$maxgap" "$rc" "$why" "$(( $(now) - ta ))" "${JOB_TIER:-}" "$u_out" "$u_in" "$u_cost" >> "$Q/logs/gaps.tsv"
   # 模型標了工單瑕疵卻沒自己收手（多半又卡回去硬做），被 watchdog 殺掉：認那行走
   # 工單契約錯 rc=2，不 bump_fail、不換模型。gaps.tsv 照記 stall —— 停滯真的發生了，
   # 而且正是收緊 STALL_S 的校準依據，不該被這裡改寫掉。
@@ -1151,6 +1335,8 @@ bon_pick() {  # $1=本單試過的；印「model slot [pslot]」每行一隻，�
 }
 bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出模型、回 0
   local id="$1" task="$2" cwd="$3" t0="$4" picks k=0 m slot ps wt tc res win="" alive line
+  local bon_used=0 bon_total bon_child bon_out
+  [ -r "$DC_PREFLIGHT_DIR/tok_used" ] && read -r bon_used < "$DC_PREFLIGHT_DIR/tok_used"
   local -a ms=() wts=() sls=() bps=()
   [ "$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$cwd" && pwd -P)" ] || return 1
   git -C "$cwd" rev-parse --verify -q HEAD >/dev/null 2>&1 || return 1
@@ -1167,9 +1353,12 @@ bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出�
   while read -r m slot ps; do
     k=$((k + 1)); wt="$Q/.bon/$id.$k"; tc="$Q/.bon/$id.$k.task.md"
     git -C "$cwd" worktree add -q --detach "$wt" HEAD >/dev/null 2>&1 || { rmdir "$slot" ${ps:+"$ps"} 2>/dev/null; continue; }
+    oc_git_cache_gc "$cwd"
     wt="$(cd "$wt" && pwd -P)"
     sed "s#$(re_esc "$cwd")#$(rp_esc "$wt")#g" "$task" > "$tc"
-    ( DC_PREFLIGHT_DIR="$Q/.preflight/$id.bon$k" watch_oc "$id.bon$k" "$m" "$tc" "$wt" "$t0" 0 > "$wt.res" ) < /dev/null &
+    ( mkdir -p "$Q/.preflight/$id.bon$k"
+      [ "$JOB_TOK_MAX" -le 0 ] || printf '%s\n' "$bon_used" > "$Q/.preflight/$id.bon$k/tok_used"
+      DC_PREFLIGHT_DIR="$Q/.preflight/$id.bon$k" watch_oc "$id.bon$k" "$m" "$tc" "$wt" "$t0" 0 > "$wt.res" ) < /dev/null &
     ms+=("$m"); wts+=("$wt"); sls+=("$slot ${ps:-}"); bps+=($!)
   done <<<"$picks"
   [ "${#ms[@]}" -gt 0 ] || { echo "dcq[$id] best-of-N 跳過：git worktree add 失敗" >&2; return 1; }
@@ -1193,13 +1382,33 @@ bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出�
   wait "${bps[@]}" 2>/dev/null
   # 被殺的 watch_oc 來不及刪自己的 pid 檔；留著的話 claim_one 看 running/ 非空，永遠不收工
   for k in "${!ms[@]}"; do rm -f "$Q/running/$id.bon$((k + 1)).pid"; done
+  # 子嘗試各自累加，收尾只把超過共同基數的增量加回主工單，避免併發寫同一檔。
+  if [ "$JOB_TOK_MAX" -gt 0 ]; then
+    bon_total=$bon_used
+    for k in "${!ms[@]}"; do
+      bon_child="$Q/.preflight/$id.bon$((k + 1))"
+      if [ -r "$bon_child/tok_used" ] && [ -s "${wts[$k]}.res" ]; then
+        read -r bon_out < "$bon_child/tok_used"
+        bon_out="$(awk -v n="$bon_out" -v base="$bon_used" 'BEGIN { printf "%.0f", n-base }')"
+      else
+        # 主動殺掉的落選者沒有完成 watch_oc 收尾，仍須計入已耗 token。
+        read -r bon_out _ <<<"$(oc_usage "${wts[$k]}" "$t0")"
+      fi
+      bon_total="$(awk -v n="$bon_total" -v out="${bon_out:-0}" 'BEGIN { printf "%.0f", n+out }')"
+      [ ! -e "$bon_child/tok_exhausted" ] || : > "$DC_PREFLIGHT_DIR/tok_exhausted"
+    done
+    printf '%s\n' "$bon_total" > "$DC_PREFLIGHT_DIR/tok_used"
+    if awk -v n="$bon_total" -v cap="$JOB_TOK_MAX" 'BEGIN {exit !(cap>0 && n>cap)}'; then
+      : > "$DC_PREFLIGHT_DIR/tok_exhausted"
+    fi
+  fi
   # 自己跑完的落選者照一般規則記帳；被殺的不算模型的錯
   for k in "${!ms[@]}"; do
     [ "$k" = "$win" ] && continue
     case "$(cat "${wts[$k]}.res" 2>/dev/null)" in
       *" upstream") cool_upstream "${ms[$k]}" ;;
       *" quota") cool_quota "${ms[$k]}" "$Q/logs/$id.bon$((k + 1)).$(fk "${ms[$k]}").out" ;;
-      *" stall"|*" slow"|*" spin"|1" exit") bump_fail "${ms[$k]}" ;;
+      *" stall"|*" slow"|*" spin"|*" loop"|*" budget"|1" exit") bump_fail "${ms[$k]}" ;;
     esac
   done
   local ok=1
@@ -1251,6 +1460,10 @@ run_job() {
   JOB_TIER="$(sed -n 's/^TIER=//p' "$jobfile")"
   JOB_SPIN_S="$(sed -n 's/^SPIN=//p' "$jobfile")"
   # watch_oc 讀的是 JOB_MAX：這裡 local 覆寫，動態作用域讓它看到逐張值
+  local TOK_MAX COST_MAX JOB_TOK_MAX
+  TOK_MAX="$(sed -n 's/^TOKMAX=//p' "$jobfile")"; TOK_MAX="${TOK_MAX:-${DCQ_TOK_MAX:-0}}"
+  COST_MAX="$(sed -n 's/^COSTMAX=//p' "$jobfile")"; COST_MAX="${COST_MAX:-${DCQ_COST_MAX:-0}}"
+  JOB_TOK_MAX="$(sed -n 's/^JOBTOKMAX=//p' "$jobfile")"; JOB_TOK_MAX="${JOB_TOK_MAX:-${DCQ_JOB_TOK_MAX:-0}}"
   local JOB_MAX sat_n nonew=0 lastsig
   JOB_MAX="$(sed -n 's/^JOBMAX=//p' "$jobfile")"; JOB_MAX="${JOB_MAX:-$JOB_MAX_G}"
   sat_n="$(sed -n 's/^SAT=//p' "$jobfile")"; sat_n="${sat_n:-0}"
@@ -1318,7 +1531,7 @@ run_job() {
         else sleep 2; continue; fi ;;
       NONE|COOL*)
         # 免費層整輪試完：還有輪次就清空 tried 再來一輪（冷卻中的那幾隻會自動跳過）。
-        # 本單已經真的跑過卻沒交件的（stall／slow／spin／驗收未過）不再試：第 2 輪只給上游失敗的。
+        # 本單已經真的跑過卻沒交件的（stall／slow／spin／loop／驗收未過）不再試：第 2 輪只給上游失敗的。
         # 2026-10-22：免費層只剩 minimax 一隻時，wo-r1 同一隻連跑 245s＋1021s 才離開免費層。
         if [ "$paid" = 0 ] && [ "$pick" = NONE ] && [ "$round" -lt "$FREE_ROUNDS" ] && [ -n "$(not_in "$noretry" "$pool")" ]; then
           round=$((round + 1)); tried="$noretry"
@@ -1333,6 +1546,9 @@ run_job() {
             echo "dcq[$id] PASS（best-of-N）model=$bm" >&2; return 0
           fi
           [ -e "$Q/.cancel/$id" ] && { rc=130; break; }
+          if [ -e "$DC_PREFLIGHT_DIR/tok_exhausted" ]; then
+            rc=124; echo "dcq[$id] 整張 token 預算用完（JOBTOKMAX=${JOB_TOK_MAX}），停止換模型" >&2; break
+          fi
           echo "dcq[$id] best-of-N 沒有交件，照原階梯" >&2; continue
         fi
         # opencode free 層用完 → freepool 層（非 opencode 體系的免費直連），輪次重算；paid 仍 0，照樣有 FREE_ROUNDS 輪
@@ -1392,6 +1608,9 @@ run_job() {
       echo 'SCOPE=over' >> "$jobfile"; echo "dcq[$id] SCOPE=over：$model 改動了工單 writes 以外的檔（見 log）" >&2
     fi
     [ -e "$Q/.cancel/$id" ] && { rc=130; break; }
+    if [ "$why" = budget ] && [ -e "$DC_PREFLIGHT_DIR/tok_exhausted" ]; then
+      rc=124; echo "dcq[$id] 整張 token 預算用完（JOBTOKMAX=${JOB_TOK_MAX}），停止換模型" >&2; break
+    fi
     # 模型下架（ProviderModelNotFound／deprecated）：加掃一次上游清單，下架的長冷卻，本單照常換下一隻
     if [ "$why:$rc" != exit:0 ] && grep -q -E "$GONE_RE" "$Q/logs/$id.$(fk "$model").out" 2>/dev/null; then
       gone_mark "$model"; rc=1
@@ -1418,7 +1637,14 @@ run_job() {
          echo "dcq[$id] $model upstream，換下一個模型" >&2 ;;
       quota:*) rc=124; cool_quota "$model" "$Q/logs/$id.$(fk "$model").out"
          echo "dcq[$id] $model 額度用完，換下一個模型" >&2 ;;
-      stall:*|slow:*|spin:*) rc=124; bump_fail "$model"; noretry="$noretry $model"
+      stall:*|slow:*|spin:*|loop:*|budget:*)
+         # 跟 jobmax 同款殺後驗收（fm-harness issue #5）：模型卡死／變慢／空轉／重複呼叫／超預算不等於沒交件，
+         # 殺掉後用同一份 pin 驗一次，過了就記 PASS 不再換模型
+         if jobmax_verify "$task" "$cwd" "$DC_PREFLIGHT_DIR"; then
+           mv "$jobfile" "$Q/done/$id.job"; rm -rf "$DC_PREFLIGHT_DIR" "$Q/.src/$id"
+           echo "dcq[$id] PASS（watchdog ${why} 殺掉，但驗收通過）model=$model" >&2; return 0
+         fi
+         rc=124; bump_fail "$model"; noretry="$noretry $model"
          echo "dcq[$id] $model ${why}，冷卻計數＋1，換下一個模型" >&2 ;;
       exit:2) echo "dcq[$id] FATAL rc=2（工單契約錯，不重試）" >&2
          break ;;
@@ -1482,6 +1708,13 @@ wt_reason() {
   git -C "$cwd" rev-parse --verify -q HEAD >/dev/null 2>&1 || { echo "repo 還沒有 commit"; return 0; }
   [ -z "$(git -C "$cwd" status --porcelain 2>/dev/null)" ] || { echo "cwd 有未 commit 的改動"; return 0; }
 }
+# .git/opencode 是 40B project-id 快取：worktree 會解析到 common gitdir 的同一顆，
+# 舊 schema 撞「no such column: project_id」全滅（fm-harness P0 實測 10 張單）。是快取不是資料，
+# 建立 worktree 時清掉讓 opencode 重建；代價是 project 關聯的舊 session 列表重開。
+oc_git_cache_gc() {  # $1=任一 repo 內路徑
+  local gd; gd="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  [ -f "$gd/opencode" ] && { rm -f "$gd/opencode"; echo "dcq: 清掉 .git/opencode 快取（worktree 相容）" >&2; }
+}
 # 收掉一個 worktree；$4=keep 保留分支（衝突時給人看），否則連分支一起刪
 wt_drop() {
   local main="$1" wt="$2" id="$3"
@@ -1496,6 +1729,7 @@ wt_setup() {
   task="$(sed -n 's/^TASK=//p' "$job")"; t0="$task"; tcopy="$Q/.src/$id/wt/$(basename "$task")"
   git -C "$cwd" worktree add -q "$wt" -b "dcq/$id" >/dev/null 2>&1 || return 1
   wt="$(cd "$wt" && pwd -P)"
+  oc_git_cache_gc "$cwd"
   mkdir -p "$Q/.src/$id/wt" || { wt_drop "$cwd" "$wt" "$id"; return 1; }
   sed "s#$(re_esc "$cwd")#$(rp_esc "$wt")#g" "$task" > "$tcopy" || { wt_drop "$cwd" "$wt" "$id"; return 1; }
   task="$tcopy"
@@ -1887,8 +2121,8 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
     ‼ 鐵則：這層只准經 opencode CLI（opencode run／dc／dcq）呼叫，禁止任何 API 直打推論端點；
       測可用性只用 opencode run 跑一次，API 沒回應不准判失效、不准反覆探測（會被判濫用鎖 IP）。
   2 freepool：非 opencode 體系的免費直連——kilo/、openrouter*/、google/、nvidia*/、groq/、agnes/。
-     派oo＝這層裡只留自有 key 的（DCQ_OO_PROVS）：NIM 3 把 key、OpenRouter 2 把 freerouter key（1000 次 :free/日/帳號）、
-     agnes；kilo 免 key、opencode free 非自有 key 都不算。
+     派oo＝這層裡只留自有 key 的（DCQ_OO_PROVS）：NIM 3 把 key、OpenRouter 2 把 freerouter key（1000 次 :free/日/帳號，
+     主帳號額度與 Bess 共用）、agnes；kilo 免 key、opencode free 非自有 key 都不算。
      groq／google 的 key 雖在 creds 但免費狀態未驗證，不放預設，要用再 DCQ_OO_PROVS 加。
   1 整層輪 DCQ_FREE_ROUNDS（預設 2）輪都敗、或全在冷卻，才換 2；2 也一樣輪完才往下。
   軟分層不排隊：1 的模型只是暫時被別張單佔滿時，這次先借 2 有空的那隻跑，不乾等；1 有空位永遠先用 1。
@@ -1977,12 +2211,28 @@ usage() {
   DCQ_RANK_MIN       每隻至少幾筆樣本才參與重排（預設 10）；DCQ_RANK_WIN 只看最近幾筆（預設 30）
   DCQ_RANK_STALL_PCT 停滯率達幾 % 就降到懲罰層（免費層之後，預設 30）；DCQ_RANK_PAROLE_D 天沒新樣本假釋回免費層（預設 7）
   DCQ_RANK_ZERO_N    樣本達幾筆而 PASS 為 0 就直接降級，不等 DCQ_RANK_MIN（預設 3；0＝停用）
+  DCQ_RANK_PAID      cost＝訂閱層層內改用「每 PASS 成本」排序（沿用貝氏平滑；缺 token 資料的退回秒數）；
+                     預設空＝照每 PASS 秒數。dcq rank 表格另有 tok/pass、cost/pass 兩欄（gaps.tsv 有第 8 欄才顯示）
   DCQ_STALL_S        輸出靜默幾秒判定停滯並換模型（預設 200；校準看 logs/gaps.tsv，dcq rank 近邊會警告）
   DCQ_JOB_MAX        單張工單總時限秒數，含所有模型（預設 2700）
   DCQ_ATTEMPT_MAX    單隻模型一次嘗試的上限秒數，撞到就換下一隻（預設 600）
+  DCQ_ATTEMPT_AUTO   逐模型嘗試上限（issue #29）：建議值＝該模型（該難度）視窗 PASS 秒數 p95×1.25，
+                     夾在 DCQ_ATTEMPT_FLOOR（預設 240）與 DCQ_ATTEMPT_MAX；PASS <DCQ_RANK_MIN 用全域。
+                     hint＝dcq rank 顯示建議欄、watchdog 仍用全域（預設）；1＝watchdog 套用（查不到用全域）；0＝關
   DCQ_SPIN_S         防空轉：git cwd 的工作樹幾秒沒變就殺這次嘗試換下一隻（預設 420；進驗收後不看；0＝關。
                      入列時有設會記進工單，唯讀工單 dcq add 前帶 DCQ_SPIN_S=0）
+  DCQ_LOOP           重複工具呼叫偵測（issue #28）：opencode session 最近 DCQ_LOOP_WIN（預設 10）筆
+                     工具呼叫裡不同簽章（工具名＋state.input）≤DCQ_LOOP_UNIQ（預設 2）＝繞圈。
+                     shadow＝只記一行 logs/loops.tsv 不殺（預設）；kill＝記 why=loop 跟 spin 同路殺掉換手；0＝關。
+                     每 DCQ_TOK_POLL_S（預設 30）秒查一次，進驗收後不查；視窗期間工作樹有變過豁免
+  DCQ_TOK_MAX        單次 output＋reasoning token 上限（預設 0＝關）
+  DCQ_COST_MAX       單次 cost 上限，可用小數（預設 0＝關）
+  DCQ_JOB_TOK_MAX    整張工單所有嘗試的 out_tok 合計上限（預設 0＝關），用完停止換模型
+                     三項入列時記進工單；每 DCQ_TOK_POLL_S 輪詢，進驗收後不判；why=budget
+                     單次超限跟 spin 同路冷卻換手；dcq rank 在 PASS out_tok 近 TOK_MAX 時警告
   DCQ_MASK           .out 遮罩器（預設 repo 的 bin/mask-transcript.mjs）
+  DCQ_OC_DB          opencode 本機 db 路徑，gaps.tsv 第 8–10 欄 token／cost 的來源
+                     （預設 $XDG_DATA_HOME/opencode/opencode.db，測試與非預設安裝用）
   DCQ_LOG_DAYS       .out 保留幾天，過期刪（預設 14）
 EOF
 }

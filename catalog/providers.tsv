@@ -8,10 +8,10 @@ google	2	AI Studio 免費層（opencode 原生直連，key 用 opencode.json {fi
 kilo	2	Kilo Gateway 免 key 免費路由（底層 OpenRouter :free），每 IP 200 req/hr，上游忙會 429；2026-10-24 加
 omniroute	6	nim-pool＋or-free 共用此 key（10-20 起 OmniRoute 只走非 OC API）（2026-10-20 使用者定 6）；or-free 單模型仍受 per-model 上限，OpenRouter :free 20 RPM 撞到由 OmniRoute 退避
 nvidia	2	NIM 免費額度直連（opencode {file:} key），每把 key 約 40 RPM，同時兩張就夠撞；2026-10-25 加
-groq	1	Groq 免費方案 8000 TPM，opencode 一次請求約 8k token，同時兩張必撞；2026-10-25 加
-claude	1	Claude 訂閱額度與主 session 共用（claude-exec，2026-10-25）：一次只跑一張，免得把主 session 擠到限額
 nvidia2	2	NIM 第二把 key（2026-11-23）；額度 per-key，同 nvidia
 nvidia3	2	NIM 第三把 key（2026-11-23）；同 nvidia
-openrouter	2	自有 freerouter key；:free 20 RPM/key、每日 1000 次/帳號；2026-11-23 加
+openrouter	2	自有 freerouter key（主帳號）；:free 20 RPM/key、每日 1000 次/帳號且與 Bess 共用；2026-11-23 加
 openrouter2	2	自有 freerouter key（第二帳號，額度獨立）；2026-11-23 加
 agnes	2	Agnes 免費 API（apihub.agnes-ai.com），額度未公開；2026-11-23 加
+groq	1	Groq 免費方案 8000 TPM，opencode 一次請求約 8k token，同時兩張必撞；2026-10-25 加
+claude	1	Claude 訂閱額度與主 session 共用（claude-exec，2026-10-25）：一次只跑一張，免得把主 session 擠到限額
