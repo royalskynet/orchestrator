@@ -62,8 +62,8 @@ printf '#!/bin/sh\nexit 0\n' > "$T/bin/deep-lint"; chmod +x "$T/bin/deep-lint"
 # 「總時限到且沒交件」；總時限到但驗收過的新路徑由 16a 用 jm1 測）
 printf '#!/bin/sh\ncase "$*" in *--dry*) exit 0 ;; *jmf*|*slow*|*hang*|*spin*|*busy*) exit 1 ;; esac\nexit 0\n' > "$T/bin/wo-verify"; chmod +x "$T/bin/wo-verify"
 # 假 hpush：記推播內容（28) 付費閘警報驗證用）
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/usr/bin/env bash\necho "$*" >> "$HPUSH_TRACE"\n' > "$T/bin/openbot-handoff"; chmod +x "$T/bin/hpush" "$T/bin/openbot-handoff"
-export HPUSH_TRACE="$T/hpush.trace"; : > "$HPUSH_TRACE"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; printf '#!/usr/bin/env bash\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"; chmod +x "$T/bin/hpush" "$T/bin/openbot-handoff"
+export HPUSH_TRACE="$T/push"; : > "$HPUSH_TRACE"
 
 mk() { printf '# %s\n' "$1" > "$T/$1.md"; dcq add "$T/$1.md" "$2" >/dev/null || echo "add failed: $1"; }
 dcq() { "$(cd "$(dirname "$0")/.." && pwd)/bin/dcq" "$@"; }
@@ -477,7 +477,7 @@ mk up3 "$T/wb"
 ( unset DCQ_PAID_OK; DC_PUSH=1 DCQ_PAID_TG_EVERY=0 DCQ_MODELS="m1" DCQ_POOL_PAID="opencode-go/deepseek-v4.1-flash go/px" DCQ_ALLOWED_FAILS=99 dcq run -j 1 ) >"$T/pg.out" 2>&1
 chk "28a 核准的 flash 有跑" "$(grep -c '^IN up3 .* opencode-go/deepseek-v4.1-flash ' "$TRACE")" "1"
 chk "28a 未核准的 go/px 剔除不派" "$(grep -c '^IN up3 .* go/px ' "$TRACE")" "0"
-chk "28a 推播進訂閱層" "$(grep -c '💰' "$HPUSH_TRACE")" "1"
+chk "28a 推播進訂閱層" "$(grep -c '進訂閱層' "$HPUSH_TRACE")" "1"
 chk "28a 推播含被擋名單" "$(grep -c 'go/px' "$HPUSH_TRACE")" "1"
 # 28b) DCQ_PAID_OK=all 恢復舊行為：go/px 照跑
 dcq clear >/dev/null; rm -rf "$DCQ_HOME/.health"/*; : > "$TRACE"; : > "$HPUSH_TRACE"; rm -f "$DCQ_HOME/logs/.paid-tg-last"
@@ -493,5 +493,5 @@ chk "28c 空白名單 go/px 不跑" "$(grep -c '^IN up5 .* go/px ' "$TRACE")" "0
 chk "28c 仍有全被擋下警報" "$(grep -c '全被' "$HPUSH_TRACE")" "1"
 dcq clear >/dev/null
 
-[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫 openbot-handoff" || { echo "FAIL 有程式還在叫 openbot-handoff：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit $fail

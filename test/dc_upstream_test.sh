@@ -49,7 +49,7 @@ X
 # dc 派工前會先跑 wo-verify --dry 驗語法、--dump 拍 pin，那兩次不算跑驗收
 printf '#!/bin/sh\ncase "$2" in --dry|--dump) ;; *) echo ok > "$VERIFIED";; esac\nexit 0\n' > "$T/bin/wo-verify"
 printf '#!/bin/sh\nexit 0\n' > "$T/bin/deep-lint"
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\nexit 0\n' > "$T/bin/openbot-handoff"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"
 chmod +x "$T/bin"/*
 printf '# t\n' > "$T/t.md"
 
@@ -139,5 +139,5 @@ ln -s "$DC" "$T/dc-link"; DC0="$DC"; DC="$T/dc-link"
 chk "經 symlink 呼叫也跑 freecheck"       "$(try 8 '^dc: 上游額度用完（Go 額度窗受限' FAKE=ok DC_FREECHECK=on OPENCODE_GO_API_KEY=fake DC_FREE_MODEL=opencode-go/x)" 1:no:fast:key
 DC="$DC0"
 chk "Go 額度窗受限不寫 .ALARM"             "$([ -e "$DCQ_HOME/.ALARM" ] && echo y || echo n)" n
-[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫 openbot-handoff" || { echo "FAIL 有程式還在叫 openbot-handoff：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit "$fail"

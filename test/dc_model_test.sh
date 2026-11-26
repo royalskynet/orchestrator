@@ -25,7 +25,7 @@ m=""; prev=""
 for a in "$@"; do [ "$prev" = "-m" ] && m="$a"; prev="$a"; done
 echo "RUN $m" >> "$TRACE"
 X
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "$*" >> "$PUSH"\n' > "$T/bin/openbot-handoff"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"
 for g in deep-lint wo-verify; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$g"; done
 chmod +x "$T/bin"/*
 printf '# t\n' > "$T/t.md"
@@ -64,10 +64,10 @@ DC_TG_EVERY=600 DC_FREE_MODEL=opencode-go/glm-5.3 "$DC" "$T/t.md" "$T/w" >/dev/n
 chk "限流：窗口過後發，並附被壓筆數"        "$(grep -c '另有 1 筆被限流' "$PUSH")" 1
 # TG 送不出去不能拖垮派工，也不能讓這筆花費沒留下紀錄
 # 不能 rm 假 hpush：PATH 後面有真的 ~/.local/bin/hpush，刪了會真發 TG。改成送失敗的假 hpush。
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\nexit 1\n' > "$T/bin/openbot-handoff"; : > "$T/q/logs/billing.tsv"
+printf '#!/bin/sh\nexit 1\n' > "$T/bin/hpush"; printf '#!/bin/sh\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"; : > "$T/q/logs/billing.tsv"
 chk "hpush 失敗照派"                     "$(try DC_FREE_MODEL=opencode/kimi-k3)" ran:-
 chk "hpush 失敗也記進 billing.tsv"       "$(grep -c "metered	opencode/kimi-k3" "$T/q/logs/billing.tsv")" 1
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "$*" >> "$PUSH"\n' > "$T/bin/openbot-handoff"; : > "$T/q/logs/billing.tsv"; rm -f "$T/q/logs/.billing-tg-last"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"; : > "$T/q/logs/billing.tsv"; rm -f "$T/q/logs/.billing-tg-last"
 # DC_TG_MUTE（預設 deepseek flash）：照派、照落帳、不發 TG；設空字串恢復警示
 chk "deepseek flash 預設靜音"               "$(try DC_FREE_MODEL=opencode-go/deepseek-v4.1-flash)" ran:-
 chk "靜音模型照樣落帳"                      "$(grep -c "sub	opencode-go/deepseek-v4.1-flash" "$T/q/logs/billing.tsv")" 1
@@ -79,7 +79,7 @@ rm -f "$T/q/logs/.billing-tg-last"; : > "$T/q/logs/billing.tsv"; printf '# t\n<!
 chk "billing-quiet 工單不發 TG"             "$(try DC_FREE_MODEL=opencode-go/glm-5.3)" ran:-
 chk "billing-quiet 工單照樣落帳"            "$(grep -c "sub	opencode-go/glm-5.3	$T/t.md" "$T/q/logs/billing.tsv")" 1
 printf '# t\n' > "$T/t.md"
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\nexit 1\n' > "$T/bin/openbot-handoff"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"
 chk "免費模型不進 billing.tsv"             "$(try DC_FREE_MODEL=big-pickle >/dev/null; grep -c big-pickle "$T/q/logs/billing.tsv")" 0
 # omniroute 沒 key：要在派工前就停，不是送空 key 去吃 401
 chk "omniroute 沒 key 不派"                 "$(try OMNIROUTE_API_KEY= HOME="$T" DC_FREE_MODEL=omniroute/free-tools)" rejected:-
@@ -133,5 +133,5 @@ X
 DC_FREE_MODEL=opencode/mimo-v2.6-flash-free "$DC" "$T/t.md" "$T/w" >/dev/null 2>&1
 chk "標題小模型限流不殺主程序"              "$?" "0"
 
-[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫 openbot-handoff" || { echo "FAIL 有程式還在叫 openbot-handoff：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit $fail

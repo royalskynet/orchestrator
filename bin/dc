@@ -167,9 +167,9 @@ case "$m" in kilo/*|openrouter/*|openrouter2/*)
 esac
 t="$(tier "$m")"
 if [ "$t" != free ]; then
-  msg="⚠️ dc 派工用到非免費模型：${m}（${t}）task=$(basename "$f") cwd=${d}"
+  msg="[系統/額度] dc 派工用到非免費模型：${m}（${t}）task=$(basename "$f") cwd=${d}"
   echo "dc: WARN ${msg}" >&2
-  # 移交可能送不出去（openbot-handoff 失敗只會默默消失），所以一定先落一行本機帳
+  # 移交可能送不出去（hpush 失敗只會默默消失），所以一定先落一行本機帳
   BL="${DCQ_HOME:-$HOME/.dcq}/logs"
   mkdir -p "$BL" && printf '%s\t%s\t%s\t%s\n' "$(date '+%F %T')" "$t" "$m" "$f" >> "$BL/billing.tsv"
   # TG 限流：DC_TG_EVERY 秒（預設 600）內只發一則，其餘只落帳；下一則附上期間被壓掉的筆數。
@@ -187,7 +187,7 @@ if [ "$t" != free ]; then
     [ "$skipped" -gt 0 ] && msg="${msg}（另有 ${skipped} 筆被限流，見 billing.tsv）"
     echo "$n" > "$ST"
     # 背景送：TG 慢或掛了都不該拖住派工。帳目錄不是正式路徑（測試把 DCQ_HOME 指到暫存）不推，DC_PUSH=1 強制推（同 zen-gate）
-    { [ "${DC_PUSH:-}" = 1 ] || [ "$BL" = "$HOME/.dcq/logs" ]; } && command -v openbot-handoff >/dev/null && { openbot-handoff "$msg" >/dev/null 2>&1 & }
+    { [ "${DC_PUSH:-}" = 1 ] || [ "$BL" = "$HOME/.dcq/logs" ]; } && command -v hpush >/dev/null && { hpush "$msg" >/dev/null 2>&1 & }
   fi
 fi
 

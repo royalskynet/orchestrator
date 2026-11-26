@@ -30,7 +30,7 @@ alarm() {
   echo "freecheck: 警報 —— $1" >&2
   echo "freecheck: 已寫 ${ALARM}，dcq 會停止收單。確認是誤報就刪掉它。" >&2
   # 狀態目錄不是正式路徑（測試把 DCQ_HOME 指到暫存）不推，DC_PUSH=1 強制推（同 zen-gate）
-  { [ "${DC_PUSH:-}" = 1 ] || [ "$STATE" = "$HOME/.dcq" ]; } && command -v openbot-handoff >/dev/null && openbot-handoff "🚨 dispatch-router freecheck: $1" >/dev/null 2>&1
+  { [ "${DC_PUSH:-}" = 1 ] || [ "$STATE" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && hpush "[系統/dcq] freecheck 停單：$1（確認誤報刪 ~/.dcq/.ALARM）" >/dev/null 2>&1
   exit 3
 }
 
@@ -72,7 +72,11 @@ case "$verdict" in
     last=$(stat -c %Y "$ST" 2>/dev/null || stat -f %m "$ST" 2>/dev/null || echo 0)
     if [ $((now - last)) -ge "${DC_FREECHECK_TG_EVERY:-86400}" ]; then
       mkdir -p "$STATE" 2>/dev/null; touch "$ST"
-      { [ "${DC_PUSH:-}" = 1 ] || [ "$STATE" = "$HOME/.dcq" ]; } && command -v openbot-handoff >/dev/null && { openbot-handoff "🚨 dispatch-router freecheck: ${msg}" >/dev/null 2>&1 & }
+      # 常態額度耗盡不是故障（Coco issue #2，2026-11-26）：進日報不即時推。異常耗盡偵測是另一個 slice，還沒做。
+      bld="${BRIEF_LINES_DIR:-}"
+      [ -z "$bld" ] && [ "$STATE" = "$HOME/.dcq" ] && bld="$HOME/.cache/brief-lines"
+      [ "${DC_PUSH:-}" = 1 ] && [ -z "$bld" ] && bld="$STATE/brief-lines"
+      [ -n "$bld" ] && { mkdir -p "$bld" 2>/dev/null && printf '%s\t%s\n' "$(date +%F)" "[系統/額度] freecheck：${msg}" >> "$bld/dcq-freecheck.tsv"; }
     fi
     exit 5 ;;
   WARN*) echo "freecheck: ${verdict}（加白，不停單）" >&2 ;;

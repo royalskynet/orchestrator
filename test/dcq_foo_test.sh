@@ -39,9 +39,9 @@ chmod +x "$T/bin/dc"
 export TRACE="$T/trace" CNT="$T/cnt"; : > "$TRACE"
 
 # 假 hpush：記推播內容（fail loud 驗證用）
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"
 chmod +x "$T/bin/hpush"
-printf '#!/usr/bin/env bash\necho "$*" >> "$HPUSH_TRACE"\n' > "$T/bin/openbot-handoff"; chmod +x "$T/bin/openbot-handoff"
+printf '#!/usr/bin/env bash\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"; chmod +x "$T/bin/openbot-handoff"
 
 # 假 foo lint：記 argv，stdout/stderr 都印一行，用來確認 dcq add 的 stdout 仍只有 job id
 cat > "$T/home/dev/fm-harness/bin/foo" <<'EOQ'
@@ -119,13 +119,13 @@ chk "zastuck 不碰訂閱層" "$(grep -c 'opencode-go' "$TRACE" || true)" "0"
 # 7) fail loud：結案失敗落 fail.tsv 本機帳＋hpush 推播（含 order 與失敗類型）；of 單同機制
 echo "# ofail 單" > "$T/tasks/ofail.md"
 env HOME="$T/home" FOOTRACE="$T/foo.trace" DCQ_ORDER=free "$R/bin/dcq" add "$T/tasks/ofail.md" "$T/w" mid >/dev/null 2>&1
-HPUSH_TRACE="$T/hpush.trace" DC_PUSH=1 DCQ_FAIL_TG_EVERY=0 DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 "$R/bin/dcq" run -j 1 >/dev/null 2>&1
+DC_PUSH=1 DCQ_FAIL_TG_EVERY=0 DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 "$R/bin/dcq" run -j 1 >/dev/null 2>&1
 sleep 1   # 推播是背景送的，等它落檔
 chk "ofail 結案失敗" "$(ls "$DCQ_HOME"/failed/*-ofail.job 2>/dev/null | wc -l | tr -d ' ')" "1"
 chk "fail.tsv 落帳 ofail" "$(grep -c 'ofail' "$DCQ_HOME/logs/fail.tsv" 2>/dev/null || true)" "1"
 chk "fail.tsv 也落帳 zafail（foo）" "$(grep -c 'zafail' "$DCQ_HOME/logs/fail.tsv" 2>/dev/null || true)" "1"
-if grep -q 'order=free' "$T/hpush.trace" && grep -q '驗收未過' "$T/hpush.trace"; then echo "ok - of 失敗推播含 order 與原因"
-else echo "not ok - 推播內容：$(cat "$T/hpush.trace" 2>/dev/null)"; fail=1; fi
+if grep -q 'order=free' "$T/push" && grep -q '驗收未過' "$T/push"; then echo "ok - of 失敗推播含 order 與原因"
+else echo "not ok - 推播內容：$(cat "$T/push" 2>/dev/null)"; fail=1; fi
 
-[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫 openbot-handoff" || { echo "FAIL 有程式還在叫 openbot-handoff：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit "$fail"

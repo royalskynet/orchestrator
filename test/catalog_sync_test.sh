@@ -62,7 +62,7 @@ cat > "$T/bin/opencode" <<'X'
 m=""; prev=""; for a in "$@"; do [ "$prev" = "-m" ] && m="$a"; prev="$a"; done
 echo "RUN $m" >> "$TRACE"
 X
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"
 for g in deep-lint wo-verify; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$g"; done
 chmod +x "$T/bin"/*; printf '# t\n' > "$T/t.md"
 dcrun() { : > "$T/trace"; DC_CATALOG="$1" "$DC" "$T/t.md" "$T/w" >/dev/null 2>&1; sed -n 's/^RUN //p' "$T/trace" | head -1; }
@@ -72,5 +72,5 @@ DEF="$(sed -n 's/^DEFAULT_FREE="\([^"]*\)".*/\1/p' "$DC")"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' free opencode-run "opencode/$DEF" ok x Zen "$DEF" any >> "$T/c.tsv"
 chk "dc 預設仍在清冊 → 不動" "$(dcrun "$T/c.tsv")" "opencode/$DEF"
 
-[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫 openbot-handoff" || { echo "FAIL 有程式還在叫 openbot-handoff：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit $fail

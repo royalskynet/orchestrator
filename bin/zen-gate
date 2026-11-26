@@ -8,7 +8,7 @@
 #   zen-gate until          印兩份閘取最大的到期時間（epoch 秒；0＝沒閘）
 #   zen-gate check          閘內 exit 1 並印到期時間；閘外 exit 0
 #   zen-gate trip [原因]     判濫用時呼叫：兩份閘都寫到 now+封鎖秒數（只延長不縮短），
-#                           由開轉關時 openbot-handoff 一則
+#                           由開轉關時 hpush 一則
 #   zen-gate ok            上游有正常回應了：刪掉失敗計數檔（streak），下次封鎖回到最短秒數
 #   zen-gate halfopen      閘已到期但還有失敗計數 → exit 0（半開：只准探測）；否則 exit 1
 #
@@ -30,7 +30,7 @@ GATE_S="${DC_ZEN_GATE_S:-21600}"
 MAX_S="${DC_ZEN_GATE_MAX_S:-172800}"
 STREAK="$DG.streak"
 # 閘檔不是正式路徑（測試、手動試跑把 DC_ZEN_GATE／JEV_ZEN_STATUS_FILE 指到暫存檔）就不推播。
-# 10-21 實例：工單模型在 shell 手動 trip 5 次，發出 5 則 TG 誤報。DC_PUSH=1 強制推（驗推播的測試配假 openbot-handoff 用）。
+# 10-21 實例：工單模型在 shell 手動 trip 5 次，發出 5 則 TG 誤報。DC_PUSH=1 強制推（驗推播的測試配假 hpush 用）。
 push_ok() { [ "${DC_PUSH:-}" = 1 ] || { [ "$DG" = "$HOME/.dcq/.zen-gate" ] && [ "$JS" = "$HOME/.jevgate/zen-free-status.json" ]; }; }
 
 dc_until() { local v; v=$(cat "$DG" 2>/dev/null | tr -dc 0-9); echo "${v:-0}"; }
@@ -82,8 +82,8 @@ case "${1:-}" in
               remediation:("Zen 免費層 403：OpenCode 判本機出口 IP 濫用（由 dc／oc-free-check 偵測）。所有消費端停打至 " + $iso + "；解封要等上游。")}' \
         > "$tmp" 2>/dev/null && chmod 600 "$tmp" && mv "$tmp" "$JS" || rm -f "$tmp"
     fi
-    if [ "$was_closed" = 0 ] && push_ok && command -v openbot-handoff >/dev/null; then
-      openbot-handoff "⚠️ Zen 免費層判本機 IP 濫用（${why}），本機所有 Zen 免費消費端停打至 $(date -r "$new" '+%m-%d %H:%M')；dcq 走兜底層" >/dev/null 2>&1 || true
+    if [ "$was_closed" = 0 ] && push_ok && command -v hpush >/dev/null; then
+      hpush "[系統/zen] 免費層判本機 IP 濫用（${why}），本機 Zen 免費消費端停打至 $(date -r "$new" '+%m-%d %H:%M')；dcq 走兜底層" >/dev/null 2>&1 || true
     fi
     echo "$new" ;;
   ok)

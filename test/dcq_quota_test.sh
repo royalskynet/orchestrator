@@ -27,7 +27,7 @@ esac
 exit 0
 EOF
 printf '#!/bin/sh\nexit 0\n' > "$T/bin/deep-lint"; printf '#!/bin/sh\nexit 0\n' > "$T/bin/wo-verify"
-printf '#!/bin/sh\nexit 1\n' > "$T/bin/opencode"; printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\nexit 0\n' > "$T/bin/openbot-handoff"
+printf '#!/bin/sh\nexit 1\n' > "$T/bin/opencode"; printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"
 chmod +x "$T/bin/"*
 DCQ="$(cd "$(dirname "$0")/.." && pwd)/bin/dcq"
 dcq() { "$DCQ" "$@"; }
@@ -79,7 +79,7 @@ ck "Zen PASS 後 @zen.cool 清掉" '[ ! -e "$H/@zen.cool" ]'
 
 # 5. #9 剔出看得到：空 opencode.json → doctor 非 0、plan 首行列剔出、pool_alert 每天一則 TG
 unset DCQ_POOL_TAIL
-printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "$*" >> "%s/push"\n' "$T" > "$T/bin/openbot-handoff"; chmod +x "$T/bin/hpush" "$T/bin/openbot-handoff"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "openbot-handoff $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/openbot-handoff"; chmod +x "$T/bin/hpush" "$T/bin/openbot-handoff"
 export DC_PUSH=1
 # 第 1–4 段 DCQ_POOL_TAIL="" 讓主層只剩 Zen 一家，add 時已觸發「單一 provider」告警蓋了今天的戳記
 ck "主層只剩一家 provider 時也告警（第 1–4 段蓋了戳記）" 'ls "$DCQ_HOME"/logs/pool-alert.* >/dev/null 2>&1'
@@ -98,7 +98,7 @@ dcq plan "$T/p.md" > "$T/plan" 2> "$T/plan.err"
 ck "plan 首行是免費池摘要且含剔出數" 'head -1 "$T/plan" | grep -q "^免費池 provider：.*剔出 [0-9]* 個"'
 ck "plan 印 WARN 到 stderr" 'grep -q "WARN.*免費池縮水" "$T/plan.err"'
 dcq plan "$T/p.md" >/dev/null 2>&1; sleep 1
-ck "TG 一天只推一則" '[ "$(wc -l < "$T/push" | tr -d " ")" = 1 ]'
+ck "免費池縮水進日報：brief-line 一天一行" '[ "$(wc -l < "$T/q/brief-lines/dcq-pool.tsv" 2>/dev/null | tr -d " ")" = 1 ]'
 # 1 隻沒宣告就告警（M2 追加建議）：只缺一隻 kilo、其餘都宣告
 # 刻意關掉的 provider 不算壞：enabled_providers 不含 kilo/google/omniroute 以外的 → 只剩宣告問題
 km="$(awk -F'\t' '!/^#/ && $1=="free" && $7 ~ /^kilo\// {sub(/^kilo\//,"",$7); printf "%s\"%s\":{}", (n++?",":""), $7}' "$T/cat/models.tsv")"
@@ -111,7 +111,7 @@ k1="$(jq -r '.provider.kilo.models | keys[0]' "$T/full.json")"
 jq --arg k "$k1" 'del(.provider.kilo.models[$k])' "$T/full.json" > "$T/cfg/opencode/opencode.json"
 dcq plan "$T/p.md" >/dev/null 2> "$T/plan2.err"
 ck "清冊有、本機只缺 1 隻也告警" 'grep -q "WARN.*kilo/$k1" "$T/plan2.err"'
-ck "同一天剔出名單變了再推一則 TG" '[ "$(wc -l < "$T/push" | tr -d " ")" = 2 ]'
+ck "同一天剔出名單變了再寫一行" '[ "$(wc -l < "$T/q/brief-lines/dcq-pool.tsv" 2>/dev/null | tr -d " ")" = 2 ]'
 cp "$T/full.json" "$T/cfg/opencode/opencode.json"
 ck "刻意關掉的列為略過" 'grep -q "略過" "$T/doc2" || ! grep -qE "openrouter/|nvidia/" "$T/cat/models.tsv"'
 
@@ -130,6 +130,6 @@ ck "Go 額度窗受限 dcq run 不中止" '[ "$(tried goq kilo/ok1)" -ge 1 ] && 
 ck "Go 額度窗受限不寫 .ALARM" '[ ! -e "$DCQ_HOME/.ALARM" ]'
 
 [ "$fail" = 0 ] || { echo "--- run.out"; tail -30 "$T/run.out"; echo "--- rank"; printf '%s\n' "$tbl"; exit 1; }
-[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫 openbot-handoff" || { echo "FAIL 有程式還在叫 openbot-handoff：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 echo QUOTA_OK
 
