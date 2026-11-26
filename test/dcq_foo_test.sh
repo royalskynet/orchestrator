@@ -29,7 +29,7 @@ n="$(basename "$1" .md)"
 echo "IN $n $DC_FREE_MODEL" >> "$TRACE"
 [ "$DC_FREE_MODEL" = za ] || exit 0
 case "$n" in
-  zafail) echo "dc: 驗收 → fake verify fail"; exit 1 ;;
+  zafail|ofail) echo "dc: 驗收 → fake verify fail"; exit 1 ;;
   zastuck) exit 1 ;;   # 永遠上游失敗（不印驗收）：不進 noretry，沒有預算會堅持到 JOB_MAX
   *) c=$(cat "$CNT" 2>/dev/null || echo 0); echo $((c + 1)) > "$CNT"
      [ "$c" = 0 ] && exit 1; exit 0 ;;
@@ -37,6 +37,13 @@ esac
 EOQ
 chmod +x "$T/bin/dc"
 export TRACE="$T/trace" CNT="$T/cnt"; : > "$TRACE"
+
+# 假 hpush：記推播內容（fail loud 驗證用）
+cat > "$T/bin/hpush" <<'EOQ'
+#!/usr/bin/env bash
+echo "$*" >> "$HPUSH_TRACE"
+EOQ
+chmod +x "$T/bin/hpush"
 
 # 假 foo lint：記 argv，stdout/stderr 都印一行，用來確認 dcq add 的 stdout 仍只有 job id
 cat > "$T/home/dev/fm-harness/bin/foo" <<'EOQ'
@@ -110,5 +117,16 @@ elapsed=$(( $(date +%s) - t_start ))
 chk "zastuck 結案失敗" "$(ls "$DCQ_HOME"/failed/*-zastuck.job 2>/dev/null | wc -l | tr -d ' ')" "1"
 chk "zastuck 不碰訂閱層" "$(grep -c 'opencode-go' "$TRACE" || true)" "0"
 [ "$elapsed" -lt 60 ] && echo "ok - zastuck 預算內放棄（${elapsed}s < 60s）" || { echo "not ok - zastuck 跑太久：${elapsed}s"; fail=1; }
+
+# 7) fail loud：結案失敗落 fail.tsv 本機帳＋hpush 推播（含 order 與失敗類型）；of 單同機制
+echo "# ofail 單" > "$T/tasks/ofail.md"
+env HOME="$T/home" FOOTRACE="$T/foo.trace" DCQ_ORDER=free "$R/bin/dcq" add "$T/tasks/ofail.md" "$T/w" mid >/dev/null 2>&1
+HPUSH_TRACE="$T/hpush.trace" DC_PUSH=1 DCQ_FAIL_TG_EVERY=0 DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 "$R/bin/dcq" run -j 1 >/dev/null 2>&1
+sleep 1   # 推播是背景送的，等它落檔
+chk "ofail 結案失敗" "$(ls "$DCQ_HOME"/failed/*-ofail.job 2>/dev/null | wc -l | tr -d ' ')" "1"
+chk "fail.tsv 落帳 ofail" "$(grep -c 'ofail' "$DCQ_HOME/logs/fail.tsv" 2>/dev/null || true)" "1"
+chk "fail.tsv 也落帳 zafail（foo）" "$(grep -c 'zafail' "$DCQ_HOME/logs/fail.tsv" 2>/dev/null || true)" "1"
+if grep -q 'order=free' "$T/hpush.trace" && grep -q '驗收未過' "$T/hpush.trace"; then echo "ok - of 失敗推播含 order 與原因"
+else echo "not ok - 推播內容：$(cat "$T/hpush.trace" 2>/dev/null)"; fail=1; fi
 
 exit "$fail"

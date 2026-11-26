@@ -1745,10 +1745,39 @@ run_job() {
     echo "dcq[$id] CANCELLED（不重試）" >&2
   else
     echo "dcq[$id] FAIL rc=${rc}（試過 $n 個模型：${tried# }）" >&2
+    fail_loud "$id" "$task" "$order" "$rc" "$n" "$vr"
   fi
   mv "$jobfile" "$Q/failed/$id.job"
   rm -rf "$DC_PREFLIGHT_DIR" "$Q/.src/$id"   # 前置檢查憑證與快照只對這張工單有效，結案就收掉（FAIL／取消都走這裡）
   return 1
+}
+
+# fail loud（2026-11-26 使用者定，起因派of）：結案失敗不靜默——本機帳 logs/fail.tsv 先行（TG 可能送不出去），
+# hpush 限流 DCQ_FAIL_TG_EVERY 秒一則（預設 600），壓掉的筆數附在下一則。人工取消不推（使用者自己殺的，不是意外）。
+# VERIFY_RUNS=0＝全死在上游（基礎設施問題）、>0＝有交件但驗收未過（工單或品質問題），訊息分開寫，處理方向不同。
+fail_loud() {  # $1=id $2=task $3=order $4=rc $5=試過幾模型 $6=VERIFY_RUNS
+  local id="$1" task="$2" order="${3:-default}" rc="$4" n="$5" vr="$6" msg bl st now n last prev skipped why
+  case "$vr" in
+    ''|*[!0-9]*) vr=0 ;;
+  esac
+  if [ "$vr" -gt 0 ]; then why="有 ${vr} 次交件但驗收未過"; else why="全死在上游／卡住，沒有模型真的交件"; fi
+  bl="$Q/logs"; mkdir -p "$bl"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date '+%F %T')" "$id" "$order" "$rc" "$vr" "$(basename "$task")" >> "$bl/fail.tsv"
+  msg="🚨 dcq 工單失敗：$(basename "$task")（order=${order}，rc=${rc}，試 ${n} 模型，${why}）id=${id}"
+  st="$bl/.fail-tg-last"; now=$(date +%s); n=$(wc -l < "$bl/fail.tsv" | tr -d ' ')
+  last=$(stat -c %Y "$st" 2>/dev/null || stat -f %m "$st" 2>/dev/null || echo 0)
+  # stat 輸出不能信：linux_stat_test 的垃圾 stat 會讓 last 變多行非數字，
+  # 直接進 $(( )) 在 set -u 下炸掉整個 run_job，工單卡死進不了 failed（跟 watch_oc 同類坑）
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  # ponytail: 併發跑多張時讀同一戳記有競態，最壞多發一則，不值得上鎖（同 dc billing）
+  if [ $((now - last)) -ge "${DCQ_FAIL_TG_EVERY:-600}" ]; then
+    prev=$(cat "$st" 2>/dev/null || echo "$((n - 1))")
+    case "$prev" in ''|*[!0-9]*) prev=$((n - 1)) ;; esac
+    skipped=$((n - 1 - prev))
+    [ "$skipped" -gt 0 ] && msg="${msg}（另有 ${skipped} 筆被限流，見 fail.tsv）"
+    echo "$n" > "$st"
+    { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && { hpush "$msg" >/dev/null 2>&1 & }
+  fi
 }
 
 # --- worktree 模式（2026-10-22，使用者定「同 repo 要併發」）--------------------------
@@ -2274,6 +2303,8 @@ usage() {
   DCQ_FOO_WAIT_S     派foo 免費梯全用盡且無冷卻可等時，重來整梯前的等待秒數（預設 10）
   DCQ_FOO_PERSIST_S  派foo 堅持等冷卻的總預算秒數，第一次進堅持起算，用完就放棄（預設 0＝不設，照 JOB_MAX 封頂；
                      互動嚴格環境設短，如 600）
+  DCQ_FAIL_TG_EVERY  結案失敗推播限流秒數（預設 600；0＝每張都推）。失敗一律先落帳 logs/fail.tsv；
+                     人工取消不推。VERIFY_RUNS=0＝全死在上游、>0＝有交件但驗收未過，訊息會分開寫
   DCQ_OO_PROVS       派oo 的 provider 名單，空白分隔（預設 "nvidia nvidia2 nvidia3 openrouter openrouter2 agnes"）
   DCQ_PREFER         模型名稱關鍵字（子字串、不分大小寫），入列時記進工單：免費層（opencode、freepool、懲罰、冷宮）
                      名稱相符的排最前（opencode 先、freepool 後），其餘照原順序 fallback；訂閱／API 不動；
