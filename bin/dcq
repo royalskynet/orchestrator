@@ -948,9 +948,9 @@ cmd_doctor() {
 cmd_plan() {
   local order="${DCQ_ORDER:-default}" task tier ocbin="${DC_BIN:-$(dirname "$(readlink -f "$0")")}" n=0
   pool_summary; pool_alert
-  case "$order" in default|free|sub|oo) ;; *) die "DCQ_ORDER 只能是 default／free／sub／oo：$order" ;; esac
+  case "$order" in default|free|sub|oo|foo) ;; *) die "DCQ_ORDER 只能是 default／free／sub／oo／foo：$order" ;; esac
   [ -z "${DCQ_PREFER:-}" ] || pref_ok "$DCQ_PREFER" || die "DCQ_PREFER 只能含英數與 . _ / : -：$DCQ_PREFER"
-  [ $# -gt 0 ] || die "用法：dcq plan <task.md>...（DCQ_ORDER=free|sub|oo 換順序；預設 default）"
+  [ $# -gt 0 ] || die "用法：dcq plan <task.md>...（DCQ_ORDER=free|sub|oo|foo 換順序；預設 default）"
   for task in "$@"; do
     n=$((n + 1)); tier="${DCQ_TIER:-}"
     [ -n "$tier" ] || { [ "${DCQ_TRIAGE:-0}" = 1 ] && [ -x "$ocbin/triage" ] && tier="$("$ocbin/triage" "$task")"; }; tier="${tier:-mid}"
@@ -965,7 +965,7 @@ cmd_plan() {
       if [ -n "$ph" ]; then f="$(not_in "$ph" "$f")"; pe="$(not_in "$ph" "$pe")"; z="$(not_in "$ph" "$z")"; echo "  0 優先「${DCQ_PREFER}」：$ph"
       else echo "  ⚠ 優先「${DCQ_PREFER}」：免費層沒有名稱相符的模型，照原順序"; fi
     fi
-    [ "$order" = free ] && { s=""; a=""; }
+    case "$order" in free|foo) s=""; a="" ;; esac
     [ "$order" = oo ] && { f="$(oo_part "$f")"; pe=""; t=""; z=""; s=""; a=""; }
     [ "$order" = sub ] && c="$(fit_pool "$POOL_CLAUDE")"
     echo "[$n] $(basename "$task")　難度 $tier"
@@ -976,6 +976,7 @@ cmd_plan() {
     [ -z "$pe" ] || echo "  · 懲罰：$pe"
     [ -z "$t" ] || echo "  · 兜底：$t"
     [ -z "$z" ] || echo "  · 冷宮（0 PASS）：$z"
+    [ "$order" = foo ] && echo "  · 純免費堅持：免費梯用盡等冷卻重來到 JOB_MAX，永不升訂閱"
     [ "$order" = sub ] || [ -z "$s" ] || echo "  · 訂閱（付費）：$s"
     case "$c" in *codex/*) echo "  · CLI（訂閱額度）：$c" ;; ?*) echo "  · Claude（訂閱額度）：$c" ;; esac
     [ -z "$a" ] || echo "  · API（按量扣錢）：$a"
@@ -1026,7 +1027,7 @@ cmd_add() {
   case "$tier" in easy|mid|hard) ;; "") tier=mid ;; *) die "難度只能是 easy／mid／hard：$tier" ;; esac
   # 層級順序（觸發詞對應：派o＝default、派of＝free、派os＝sub）；沒給一律 default（預設＝派o，10-21 使用者定）：
   # 免費全敗會升到 opencode-go 訂閱層；只要免費的呼叫端自己帶 DCQ_ORDER=free
-  case "$order" in default|free|sub|oo) ;; *) die "DCQ_ORDER 只能是 default／free／sub／oo：$order" ;; esac
+  case "$order" in default|free|sub|oo|foo) ;; *) die "DCQ_ORDER 只能是 default／free／sub／oo／foo：$order" ;; esac
   [ -z "${DCQ_PREFER:-}" ] || pref_ok "$DCQ_PREFER" || die "DCQ_PREFER 只能含英數與 . _ / : -：$DCQ_PREFER"
   # --src：先查前張單存在，再把它的 cwd／分支／摘要併進本單（找不到就 die，不靜默忽略）
   local srcctx=""
@@ -1056,6 +1057,13 @@ cmd_add() {
   local jtmp="$Q/pending/.$id.job.tmp"
   printf 'TASK=%s\nORIG_TASK=%s\nCWD=%s\nTIER=%s\nORDER=%s\n' "$task" "$orig_task" "$cwd" "$tier" "$order" > "$jtmp" \
     || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：寫 job 檔失敗"; }
+  # 派foo：lint advisory（不擋單）＋job 檔標 VIA=foo 給報表分辨派法（2026-11-26 裁決）
+  if [ "$order" = foo ]; then
+    local foobin="$HOME/dev/fm-harness/bin/foo"
+    if [ -x "$foobin" ]; then "$foobin" lint "$orig_task" "$cwd" >&2 || true
+    else echo "dcq: WARN 派foo lint 略過：$foobin 不存在或不可執行" >&2; fi
+    echo 'VIA=foo' >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }
+  fi
   [ -n "$src" ] && { echo "SRC=$src" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }
   [ -n "${DCQ_SPIN_S:-}" ] && { echo "SPIN=$DCQ_SPIN_S" >> "$jtmp" || { rm -f "$jtmp"; rm -rf "$Q/.src/$id"; die "dcq add：追加 job 檔失敗"; }; }   # 逐張關防空轉（唯讀工單帶 0）
   # 逐張關 worktree（2026-11-07）：DCQ_WORKTREE=0 入列時記 NOWT=1。為什麼：產出寫在被 .gitignore 擋掉的
@@ -1461,7 +1469,7 @@ bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出�
 
 run_job() {
   local jobfile="$1" id task cwd rc=0 why model slot tried="" n=0 t0 pick sig prevsig prevmodel
-  local pool fp_pool fp=0 paid=0 pen=0 tail=0 zero=0 sub=0 cl=0 api=0 round=1 left vr=0 pslot pen_pool tail_pool zero_pool paid_pool cl_pool api_pool noretry="" bon=0 bm ran=0
+  local pool fp_pool fp=0 paid=0 pen=0 tail=0 zero=0 sub=0 cl=0 api=0 round=1 left vr=0 pslot pen_pool tail_pool zero_pool paid_pool cl_pool api_pool noretry="" bon=0 bm ran=0 persist_t0=""
   id="$(basename "$jobfile" .job)"
   task="$(sed -n 's/^TASK=//p' "$jobfile")"
   # B2：重派（孤兒回收／rerun）也讀快照；沒有快照的舊單先補。補快照失敗＝這張單直接失敗，不派模型
@@ -1511,12 +1519,15 @@ run_job() {
   fi
   fp_pool="$(fp_part "$pool")"; pool="$(echo $ph $(oc_part "$pool"))"
   tail_pool="$(fit_pool "$POOL_TAIL")"; paid_pool="$(fit_pool "$POOL_PAID")"; api_pool="$(fit_pool "$POOL_API")"; cl_pool=""
-  # ORDER：default＝免費→懲罰→兜底→訂閱→API；free＝只用免費的層；sub＝訂閱先，用盡才回免費的層，再 CLI 訂閱層，API 墊底；
+  # ORDER：default＝免費→懲罰→兜底→訂閱→API；foo＝純免費堅持（2026-11-26 使用者定）：同 free 不進訂閱／API，
+  #       但免費梯用盡不失敗——還有沒真正交過件的模型就等冷卻重來整梯（見下方 NONE/COOL 收尾），JOB_MAX 仍是總上限；
+  #       free＝只用免費的層，全敗就失敗；sub＝訂閱先，用盡才回免費的層，再 CLI 訂閱層，API 墊底；
   #       oo＝只用自有 key 免費層（OO_PROVS：NIM 多 key、OR freerouter、agnes），全敗就失敗不換層
   local order free_main=""
   order="$(sed -n 's/^ORDER=//p' "$jobfile")"
   case "$order" in
-    free|"") paid_pool="" api_pool="" ;;
+    default) ;;
+    foo|free|"") paid_pool="" api_pool="" ;;
     sub) cl_pool="$(fit_pool "$POOL_CLAUDE")"
       [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1; } ;;
     oo) local _oop; _oop="$(oo_part "$ph")"
@@ -1533,6 +1544,7 @@ run_job() {
     echo "dcq[$id] 逐單指定模型（不換層）：${pool}" >&2
   fi
   [ "$sub" = 1 ] && echo 'PAID=1' >> "$jobfile"
+  local main_pool="$pool"   # 派foo 純免費堅持：免費梯用盡後重來整梯的起點（jm 指定模型時等於指定清單，但 jm 單不適用堅持）
   t0=$(now)
 
   while true; do
@@ -1612,6 +1624,28 @@ run_job() {
         if [ "$api" = 0 ] && [ -n "$api_pool" ]; then
           api=1; paid=1; pool="$api_pool"; tried=""; echo 'PAID=1' >> "$jobfile"
           echo "dcq[$id] 訂閱層也用盡（${pick%% *}），fallback API 層（按量扣錢）：${api_pool}" >&2; continue
+        fi
+        # 派foo 純免費堅持（2026-11-26 使用者定）：免費梯全用盡不升訂閱、也不即刻失敗——
+        # 還有「沒真正交過件」的模型（上游死／額度／冷卻中，不在 noretry）就重來整梯等冷卻；
+        # 全部模型都真跑過卻沒交件（全進 noretry）才放棄。JOB_MAX 仍是總上限。逐單指定模型（jm）不適用。
+        # DCQ_FOO_PERSIST_S：堅持狀態的總預算秒數（第一次進堅持起算），超過就放棄——
+        # 互動嚴格環境（如 Devin）設短（如 600），預設 0＝不設，照 JOB_MAX 封頂。
+        if [ "$order" = foo ] && [ -z "$jm" ] && [ -n "$(not_in "$noretry" "$main_pool $fp_pool $pen_pool $tail_pool $zero_pool")" ]; then
+          [ -n "$persist_t0" ] || persist_t0=$(now)
+          # 預算用完直接 break：落在 COOL sleep 會繞回來變無窮迴圈
+          if [ "${DCQ_FOO_PERSIST_S:-0}" -gt 0 ] && [ $(( $(now) - persist_t0 )) -ge "${DCQ_FOO_PERSIST_S:-0}" ]; then
+            echo "dcq[$id] 純免費堅持預算用完（DCQ_FOO_PERSIST_S=${DCQ_FOO_PERSIST_S}s），放棄" >&2
+            break
+          fi
+          fp=0 pen=0 tail=0 zero=0 round=1 paid=0 pool="$main_pool" tried="$noretry"
+          if [ "$pick" = NONE ]; then
+            echo "dcq[$id] 免費梯用盡，純免費堅持：重來整梯等冷卻（永不升訂閱）" >&2
+            sleep "${DCQ_FOO_WAIT_S:-10}"
+          else
+            left=${pick#COOL }; echo "dcq[$id] 免費梯用盡（冷卻中，最快 ${left}s），純免費堅持：重來整梯等冷卻" >&2
+            sleep $(( left < 30 ? left : 30 ))
+          fi
+          continue
         fi
         [ "$pick" = NONE ] && break
         left=${pick#COOL }; sleep $(( left < 30 ? left : 30 )); continue ;;
@@ -2151,6 +2185,8 @@ O（Orchestrator，repo dispatch-router）＝派工智慧路由。
 ■ 派法（DCQ_ORDER，入列時寫進工單）
   派o    default（預設）  opencode free → freepool → 懲罰層 → 兜底層 → 冷宮 → 訂閱層（opencode-go，扣 Go 額度）
                           → API 層（只有 DCQ_ALLOW_API=1 才接，按量扣錢）
+  派foo  foo              純免費堅持（2026-11-26 起）：只走免費的層，全用盡等冷卻重來整梯到 JOB_MAX，永不升訂閱；
+                          入列時跑 foo lint advisory＋job 檔標 VIA=foo。與派of 的區隔：of 全敗即失敗，foo 寧等不花錢
   派of   free             只走免費的層（opencode free／freepool／懲罰／兜底／冷宮），全敗就失敗，不升訂閱
   派oo   oo               只走自有 key 免費層（DCQ_OO_PROVS：nvidia×3 key、openrouter×2 freerouter key、agnes），全敗就失敗
   派os   sub              訂閱層先，用盡回 opencode free → freepool → …，再 CLI 訂閱層（codex → claude），API 墊底
@@ -2232,8 +2268,12 @@ usage() {
   DCQ_ALLOW_API      1＝訂閱層後再接 API 層（清冊 billing=api 有 dc_id 的列，或 DCQ_POOL_API）；預設 0
   DCQ_TIER           dcq add 沒給難度時用這個（沒設＝mid）
   DCQ_TRIAGE         1＝沒給難度時問本機 Laya（bin/triage）判；預設 0 不問
-  DCQ_ORDER          層級順序，入列時記進工單：free＝只用免費（派of）、default＝免費優先、全敗升訂閱（派o，未設時的預設）、
-                     sub＝訂閱優先（派os）、oo＝只用自有 key 免費層（派oo）
+  DCQ_ORDER          層級順序，入列時記進工單：free＝只用免費、全敗就失敗（派of）、default＝免費優先、全敗升訂閱（派o，未設時的預設）、
+                     sub＝訂閱優先（派os）、oo＝只用自有 key 免費層（派oo）、
+                     foo＝純免費堅持：只用免費、用盡等冷卻重來到 JOB_MAX、永不升訂閱＋lint advisory＋標 VIA=foo（派foo）
+  DCQ_FOO_WAIT_S     派foo 免費梯全用盡且無冷卻可等時，重來整梯前的等待秒數（預設 10）
+  DCQ_FOO_PERSIST_S  派foo 堅持等冷卻的總預算秒數，第一次進堅持起算，用完就放棄（預設 0＝不設，照 JOB_MAX 封頂；
+                     互動嚴格環境設短，如 600）
   DCQ_OO_PROVS       派oo 的 provider 名單，空白分隔（預設 "nvidia nvidia2 nvidia3 openrouter openrouter2 agnes"）
   DCQ_PREFER         模型名稱關鍵字（子字串、不分大小寫），入列時記進工單：免費層（opencode、freepool、懲罰、冷宮）
                      名稱相符的排最前（opencode 先、freepool 後），其餘照原順序 fallback；訂閱／API 不動；

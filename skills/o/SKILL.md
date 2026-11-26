@@ -25,7 +25,7 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 | 觸發詞 | `DCQ_ORDER` | 順序 |
 |---|---|---|
 | 派o／派工 | `default` | 免費 → 懲罰 → 兜底 → 冷宮 → 訂閱（API 預設關） |
-| 派foo | `foo` | `~/dev/fm-harness/bin/foo add`：lint advisory → 免費先、全敗升訂閱（≈default 序，job 檔標 VIA=foo）。ds-claude 預設（2026-11-26） |
+| 派foo | `foo` | 純免費堅持：只走免費的層、永不升訂閱；免費梯用盡等冷卻重來整梯到 JOB_MAX（沒真正交過件的才重試），全進 noretry 才失敗。入列自動跑 foo lint advisory、job 檔標 VIA=foo。`DCQ_ORDER=foo dcq add` 或 `~/dev/fm-harness/bin/foo add` 皆可。ds-claude 預設（2026-11-26 純免費化） |
 | 派of | `free` | 只用免費的層，全敗就失敗 |
 | 派oo | `oo` | 只用自有 key 免費層（NIM 三把 key、OpenRouter 兩把 freerouter key、agnes；`DCQ_OO_PROVS` 可改名單——groq／google 免費狀態未驗證未進預設），全敗就失敗 |
 | 派os | `sub` | 訂閱先，用盡回免費，API 墊底 |
@@ -41,7 +41,7 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 ## Cheat sheet
 
 ```text
-DCQ_ORDER=<default|free|sub> dcq plan <task.md>...            # 印難度（預設 mid；DCQ_TRIAGE=1 才由 Laya 判）與會走的層，不入列
+DCQ_ORDER=<default|free|sub|oo|foo> dcq plan <task.md>...            # 印難度（預設 mid；DCQ_TRIAGE=1 才由 Laya 判）與會走的層，不入列
 DCQ_ORDER=<序> dcq add <task.md 絕對路徑> <cwd> <easy|mid|hard> # 難度照 plan；印 job id，全部收起來
 dcq start [-j N=4]                                             # 從 agent session 用這個（tmux 背景，上限 8）
 dcq wait <id>... [--timeout S]                                 # Bash run_in_background 跑；rc 0 全過／1 有失敗／124 逾時／3 沒 runner
@@ -97,11 +97,11 @@ Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|m
 
 與 `ds-claude` skill 內文的「預設全部派」「先問使用者」衝突時以本段為準。
 
-- 預設＝派o（`DCQ_ORDER=default`，dcq 未設時也是它）。免費全敗升 opencode-go 訂閱層；API 墊底要 `DCQ_ALLOW_API=1`，只有這個才問使用者。使用者明說才走派os。
-- 機械活、多步工單、能寫成一條驗收的改動，由主 session 主動提出派o（不套 5 分鐘門檻，分流以 ds-claude 為準），派前不問、不等答覆。goal state 有 `nightnav.authorized` 的批次交 `/nightnav` 夜裡跑。完工由 wo-verify 機械判定，exit code 說了算。
-- 派deep（deepclaude 的 `deep-run`，OpenCode Go 訂閱）：要 agent 多步自主或沙箱外寫入。gh／push 這類低難度活派o 就能做。兩條線不混。
-- o 做不了（沙箱外寫入、主 session 即時上下文）才依能力派：重閱讀／內容生成／查證掃描／輕量輔助／格式搬運先走 `ds-claude`（`ds-run.sh`：改檔帶驗收，唯讀查詢用 `--ask`；底層 opencode run DeepSeek flash），驗收失敗照它的階梯升 pro。
-- ds-claude 開著時（預設，`/ds-claude off` 關），Sonnet 級與沒寫 model 的子代理改派od、Haiku 級改派of。hook `subagent-model-remind.sh`（symlink 到公開版 `subagent-redirect.sh`，對照表 `~/dev/ether-projects/ds-claude-local/redirect.json`）會擋並給 dcq 指令。`Explore`／`o-worker`／`Plan`／`reviewer` 例外，要留 Claude 子代理的在 prompt 加 `ds-keep`。
+- 預設實作執行人＝派foo（`DCQ_ORDER=foo`，純免費堅持：只用免費、永不升訂閱、用盡等冷卻重來；入列跑 lint advisory）。要「全敗即失敗不等候」的免費單用派of；要花錢買快才派o／派os／派od。API 墊底要 `DCQ_ALLOW_API=1`，只有這個才問使用者。使用者明說派o／派of／派oo／派os／派od 才走對應順序。
+- 機械活、多步工單、能寫成一條驗收的改動，由主 session 主動提出派foo（不套 5 分鐘門檻，分流以 ds-claude 為準），派前不問、不等答覆。goal state 有 `nightnav.authorized` 的批次交 `/nightnav` 夜裡跑。完工由 wo-verify 機械判定，exit code 說了算。
+- 派deep（deepclaude 的 `deep-run`，OpenCode Go 訂閱）：要 agent 多步自主或沙箱外寫入。gh／push 這類低難度活派foo 就能做。兩條線不混。
+- `ds-claude` 的 `ds-run.sh` 是另一條直接執行＋重做／review ladder；使用者明說 ds-claude／opencode／deepseek，或需要那條 ladder 時才用。唯讀查詢可用 `--ask`，一般實作不因這段繞回 DeepSeek。
+- ds-claude 開著時（預設，`/ds-claude off` 關），沒寫 model、Sonnet 級、Haiku 級子代理都改派 foo（Haiku 用 easy）。hook `subagent-model-remind.sh`（symlink 到公開版 `subagent-redirect.sh`，對照表 `~/dev/ether-projects/ds-claude-local/redirect.json`）會擋並給 foo 指令。`Explore`／`o-worker`／`Plan`／`reviewer` 例外，要留 Claude 子代理的在 prompt 加 `ds-keep`。
 - 含憑證、個資、LCT／CoinW 內容的不送外部 provider，主 session 自己做。codex 只接它專屬的執行位。
 
 ## 查哪裡

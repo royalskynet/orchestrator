@@ -192,13 +192,13 @@ for i in $(seq 12); do printf '%s\tmA\t10\t0\texit\t900\teasy\n' "$D" >> "$G"; d
 for i in 1 2 3; do printf '%s\tmB\t10\t0\texit\t60\tmid\n' "$D" >> "$G"; done         # mB：3 過 <RANK_MIN → 全域
 DCQBIN="$(cd "$(dirname "$0")/.." && pwd)/bin/dcq"   # 新欄位驗這個 repo 的版本（PATH 的 dcq 指向另一個安裝）
 out="$(DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank mid)"
-got="$(printf '%s\n' "$out" | awk '$1=="mA"{print $NF}')"
+got="$(printf '%s\n' "$out" | awk '/^mA /{print $NF}')"
 [ "$got" = "500s" ] || { echo "FAIL amax mA mid: got [$got] want [500s]"; fail=1; }
-got="$(printf '%s\n' "$out" | awk '$1=="mB"{print $NF}')"
+got="$(printf '%s\n' "$out" | awk '/^mB /{print $NF}')"
 [ "$got" = "600s" ] || { echo "FAIL amax mB mid: got [$got] want [600s]"; fail=1; }
-got="$(DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank easy | awk '$1=="mA"{print $NF}')"
+got="$(DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank easy | awk '/^mA /{print $NF}')"
 [ "$got" = "600s" ] || { echo "FAIL amax mA easy: got [$got] want [600s]"; fail=1; }   # 900×1.25=1125 夾到 600
-got="$(DCQ_ATTEMPT_AUTO=0 DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank mid | awk '$1=="model"{print $NF}')"
+got="$(DCQ_ATTEMPT_AUTO=0 DCQ_MODELS= DCQ_POOL_ZEN="mA mB" DCQ_POOL_GO="" "$DCQBIN" rank mid | awk '/^model /{print $NF}')"
 [ "$got" = "狀態" ] || { echo "FAIL AUTO=0 表格仍有上限欄: header last=[$got]"; fail=1; }
 # 13) issue #30：tok/pass、cost/pass＝含失敗與被殺嘗試的合計 ÷ PASS；舊紀錄缺第 8 欄不算
 #     tA：8 過各 1000 out_tok＋2 敗各 5000 → tok/pass=18000/8=2250；cost=(8×0.01+2×0.05)/8=0.0225
@@ -209,11 +209,11 @@ for i in $(seq 8); do rowt tA 0 exit 60 1000 0.01; done
 for i in 1 2; do rowt tA 1 exit 60 5000 0.05; done
 for i in 1 2 3; do rowt tB 0 exit 60 800 0.02; done          # tB：有 token 的樣本 3 <RANK_MIN → -
 out="$(DCQ_MODELS= DCQ_POOL_ZEN="tA tB" DCQ_POOL_GO="" "$DCQBIN" rank)"
-got="$(printf '%s\n' "$out" | awk '$1=="tA"{print $(NF-1)}')"
+got="$(printf '%s\n' "$out" | awk '/^tA /{print $(NF-1)}')"
 [ "$got" = "2250" ] || { echo "FAIL tok/pass tA: got [$got] want [2250]"; fail=1; }
-got="$(printf '%s\n' "$out" | awk '$1=="tA"{print $NF}')"
+got="$(printf '%s\n' "$out" | awk '/^tA /{print $NF}')"
 [ "$got" = "0.0225" ] || { echo "FAIL cost/pass tA: got [$got] want [0.0225]"; fail=1; }
-got="$(printf '%s\n' "$out" | awk '$1=="tB"{print $(NF-1)"/"$NF}')"
+got="$(printf '%s\n' "$out" | awk '/^tB /{print $(NF-1)"/"$NF}')"
 [ "$got" = "-/-" ] || { echo "FAIL tok/cost tB: got [$got] want [-/-]"; fail=1; }
 # 14) 全舊格式（無第 8 欄）→ 表格逐字同改動前：標題列不含新欄
 : > "$G"

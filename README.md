@@ -4,7 +4,7 @@
 
 - **模型來源不限 opencode**：Zen 免費池、opencode-go 訂閱、直連的 Kilo／NVIDIA NIM／Groq／Google AI Studio／OpenRouter 免費模型（不必裝 OmniRoute）、經 OmniRoute 轉接的供應商（選配）、付費 API，全部登記在 `catalog/models.tsv`，同一套階梯調度。opencode CLI 只當 agent 外殼（工具呼叫、檔案編輯）。
 - **智慧加權**：每隻模型依 `gaps.tsv` 實績算「平均幾秒換到一次通過」，加貝氏平滑（樣本少的先拉向全池平均），層內自動重排。0 PASS 的進冷宮，停滯率高的進懲罰層。
-- **多層 fallback**：免費 → 懲罰 → 兜底 → 冷宮 → 訂閱 → API（API 預設關）。觸發詞：派o＝免費優先、全敗升訂閱；派of＝只用免費；派os＝訂閱優先。
+- **多層 fallback**：免費 → 懲罰 → 兜底 → 冷宮 → 訂閱 → API（API 預設關）。觸發詞：派o＝免費優先、全敗升訂閱；派foo＝純免費堅持、用盡等冷卻重來、永不升訂閱；派of＝只用免費、全敗就失敗；派os＝訂閱優先。
 - **完成由腳本判定**：exit code＝工單自帶驗收腳本（`wo-verify`）的結果，不是模型自述。
 - `dc` 派單張，`dcq` 併發跑多張（cwd 互斥、per-model 冷卻、停滯 watchdog、Zen 與 Go 免費額度分開計）。
 
@@ -346,7 +346,7 @@ Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`s
 - 半開：閘到期但還有連敗計數時，dcq 把 zen 的併發上限壓到 1，只放一個探測。
 - 探測的請求被上游正常回應（rc=0、沒有濫用字樣）就 `zen-gate ok` 清掉計數。判準是請求成功，不是驗收通過。
 
-層級順序每張工單入列時記下（`DCQ_ORDER`）：`default` 免費優先（派o）、`free` 只用免費（派of）、`sub` 訂閱優先（派os）。`dcq plan <task.md>...` 在派工前印出每張的難度和會走的層，不入列。
+層級順序每張工單入列時記下（`DCQ_ORDER`）：`default` 免費優先（派o）、`free` 只用免費、全敗就失敗（派of）、`foo` 純免費堅持、用盡等冷卻重來整梯、永不升訂閱（派foo）、`sub` 訂閱優先（派os）。`dcq plan <task.md>...` 在派工前印出每張的難度和會走的層，不入列。
 
 系統一模型（Laya、Jev）只回結構化判斷，不生成文字，另列在 `catalog/judges.tsv`，dcq 不派。
 
