@@ -8,6 +8,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"   # 不讀真的全域閘（10-19：Jev 閘封鎖時這些測試全掛）
 export DCQ_HOME="$T/q"; mkdir -p "$DCQ_HOME/logs"
 export DCQ_RANK_PRIOR_K=0   # 下面 1)–9) 驗原始 s/pass 規則；平滑另在 10) 驗
+export DCQ_PAID_OK=all   # 測的是排序機制不是付費閘；閘在 dcq_test 28) 專案測
 G="$DCQ_HOME/logs/gaps.tsv"; D="$(date +%F)_00:00:00"
 row() { printf '%s\t%s\t10\t%s\t%s\n' "$D" "$1" "$2" "$3" >> "$G"; }
 rep() { local i; for i in $(seq "$1"); do row "$2" "$3" "$4"; done; }

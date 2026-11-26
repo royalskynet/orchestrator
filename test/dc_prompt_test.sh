@@ -29,7 +29,8 @@ if [ "$1" = debug ]; then echo called >> "${DEBUG_MARK:?}"; echo '{"enabled_prov
   echo "BASHTO=${OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS-<unset>}"
 } >> "$TRACE"
 X
-for g in deep-lint wo-verify hpush; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$g"; done
+for g in deep-lint wo-verify openbot-handoff; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$g"; done
+printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"
 chmod +x "$T/bin"/*
 printf '# t\n' > "$T/t.md"
 
@@ -62,4 +63,5 @@ chk "Go 不注入 enabled_providers" "$(field CONFIG | jq -r 'has("enabled_provi
 chk "Go 不呼叫 debug config" "$([ -s "$DEBUG_MARK" ] && echo called || echo none)" "none"
 
 [ "$fail" = 0 ] && echo PASS
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit $fail

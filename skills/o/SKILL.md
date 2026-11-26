@@ -24,7 +24,7 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 
 | 觸發詞 | `DCQ_ORDER` | 順序 |
 |---|---|---|
-| 派o／派工 | `default` | 免費 → 懲罰 → 兜底 → 冷宮 → 訂閱（API 預設關） |
+| 派o／派工 | `default` | 免費 → 懲罰 → 兜底 → 冷宮 → 訂閱（API 預設關）。訂閱層過白名單 `DCQ_PAID_OK`（預設只 deepseek-v4.1-flash）：非 flash 付費模型剔除不派，進訂閱層 TG 告知被擋名單（2026-11-26） |
 | 派foo | `foo` | 純免費堅持：只走免費的層、永不升訂閱；免費梯用盡等冷卻重來整梯到 JOB_MAX（沒真正交過件的才重試），全進 noretry 才失敗。入列自動跑 foo lint advisory、job 檔標 VIA=foo。`DCQ_ORDER=foo dcq add` 或 `~/dev/fm-harness/bin/foo add` 皆可。ds-claude 預設（2026-11-26 純免費化） |
 | 派of | `free` | 只用免費的層，全敗就失敗 |
 | 派oo | `oo` | 只用自有 key 免費層（NIM 三把 key、OpenRouter 兩把 freerouter key、agnes；`DCQ_OO_PROVS` 可改名單——groq／google 免費狀態未驗證未進預設），全敗就失敗 |

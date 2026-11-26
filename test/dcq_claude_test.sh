@@ -11,6 +11,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export DCQ_HOME="$T/q" DC_BIN="$T/bin" PATH="$T/bin:$PATH" DCQ_CATALOG="$T/cat"
 export DC_FREECHECK=off DC_NEGCTL=0 DCQ_POLL_S=1 DCQ_POOLSYNC=0 DCQ_FREE_ROUNDS=1 DCQ_GO_STATE="$T/none.json" DCQ_AUTORANK=0
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"
+export DCQ_PAID_OK=all   # 測 CLI 層排序機制不是付費閘；閘在 dcq_test 28) 專案測
 unset DCQ_POOL_ZEN DCQ_POOL_TAIL DCQ_POOL_PAID DCQ_POOL_GO DCQ_POOL_CLAUDE DCQ_MODELS DCQ_PROV_MAX DCQ_EASY_ONLY DCQ_EASY_STRICT DCQ_ALLOW_API DCQ_TIER DCQ_ORDER
 mkdir -p "$T/bin" "$T/cat" "$T/w" "$T/tasks"
 fail=0; ok() { echo "ok - $1"; }; bad() { echo "not ok - $1"; fail=1; }

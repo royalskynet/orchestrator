@@ -12,7 +12,7 @@ export DC_FREECHECK=off DC_NEGCTL=0 DCQ_POLL_S=1 DCQ_AUTORANK=0 DCQ_POOLSYNC=0 D
 export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json" DCQ_FREE_ROUNDS=1 DCQ_ORDER=default
 # zz 當 runner 的 DCQ_MODELS，好讓「沒帶的單照預設池」有別於後面的預設池
 export DCQ_JOB_MAX=20  # 突變後也必須有界結束，不等正式冷卻週期。
-export DCQ_POOL_GO="" DCQ_POOL_TAIL="" DCQ_POOL_PAID="" DCQ_POOL_ZEN="zz"
+export DCQ_POOL_GO="" DCQ_POOL_TAIL="" DCQ_POOL_PAID="" DCQ_POOL_ZEN="zz" DCQ_PAID_OK=all   # PAID_OK=all：逐單覆寫案例測階梯機制不是付費閘
 unset DCQ_MODELS DCQ_PREFER DCQ_ALLOW_API
 mkdir -p "$T/bin" "$T/w1" "$T/w2"
 cat > "$T/bin/dc" <<'EOF'

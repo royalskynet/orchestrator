@@ -13,7 +13,7 @@ export DC_ZEN_GATE="$T/zen-gate" JEV_ZEN_STATUS_FILE="$T/jev-zen.json"
 export DC_ZEN_GATE_S=100
 export PATH="$T/bin:$PATH"
 # 假 hpush：只記呼叫次數，真的不送 TG
-printf '#!/bin/sh\necho x >> "%s/hpush.log"\n' "$T" > "$T/bin/hpush"; chmod +x "$T/bin/hpush"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho x >> "%s/hpush.log"\n' "$T" > "$T/bin/openbot-handoff"; chmod +x "$T/bin/hpush" "$T/bin/openbot-handoff"
 
 fail=0
 chk() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1: got '$2' want '$3'"; fail=1; fi; }
@@ -90,4 +90,6 @@ keep_streak=$(streak)
 "$ZG" trip "Jev 閘還在" >/dev/null
 chk "Jev 閘未到期：streak 不加" "$(streak)" "$keep_streak"
 
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit "$fail"
+

@@ -27,7 +27,7 @@ esac
 exit 0
 EOF
 printf '#!/bin/sh\nexit 0\n' > "$T/bin/deep-lint"; printf '#!/bin/sh\nexit 0\n' > "$T/bin/wo-verify"
-printf '#!/bin/sh\nexit 1\n' > "$T/bin/opencode"; printf '#!/bin/sh\nexit 0\n' > "$T/bin/hpush"
+printf '#!/bin/sh\nexit 1\n' > "$T/bin/opencode"; printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\nexit 0\n' > "$T/bin/openbot-handoff"
 chmod +x "$T/bin/"*
 DCQ="$(cd "$(dirname "$0")/.." && pwd)/bin/dcq"
 dcq() { "$DCQ" "$@"; }
@@ -79,7 +79,7 @@ ck "Zen PASS 後 @zen.cool 清掉" '[ ! -e "$H/@zen.cool" ]'
 
 # 5. #9 剔出看得到：空 opencode.json → doctor 非 0、plan 首行列剔出、pool_alert 每天一則 TG
 unset DCQ_POOL_TAIL
-printf '#!/bin/sh\necho "$*" >> "%s/push"\n' "$T" > "$T/bin/hpush"; chmod +x "$T/bin/hpush"
+printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"; printf '#!/bin/sh\necho "$*" >> "%s/push"\n' "$T" > "$T/bin/openbot-handoff"; chmod +x "$T/bin/hpush" "$T/bin/openbot-handoff"
 export DC_PUSH=1
 # 第 1–4 段 DCQ_POOL_TAIL="" 讓主層只剩 Zen 一家，add 時已觸發「單一 provider」告警蓋了今天的戳記
 ck "主層只剩一家 provider 時也告警（第 1–4 段蓋了戳記）" 'ls "$DCQ_HOME"/logs/pool-alert.* >/dev/null 2>&1'
@@ -130,4 +130,6 @@ ck "Go 額度窗受限 dcq run 不中止" '[ "$(tried goq kilo/ok1)" -ge 1 ] && 
 ck "Go 額度窗受限不寫 .ALARM" '[ ! -e "$DCQ_HOME/.ALARM" ]'
 
 [ "$fail" = 0 ] || { echo "--- run.out"; tail -30 "$T/run.out"; echo "--- rank"; printf '%s\n' "$tbl"; exit 1; }
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 echo QUOTA_OK
+

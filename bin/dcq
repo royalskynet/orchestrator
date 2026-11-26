@@ -474,6 +474,21 @@ if [ -z "${DCQ_MODELS:-}" ] && [ "${DCQ_AUTORANK:-1}" != 0 ]; then
   _rk=""; [ "${DCQ_RANK_PAID:-}" = cost ] && _rk=cost
   POOL_TAIL="$(rank_layer "$POOL_TAIL")"; POOL_PAID="$(rank_layer "$POOL_PAID" "$_rk")"
 fi
+# DCQ_PAID_OK：訂閱付費白名單（空白分隔）。預設只核准 deepseek-v4.1-flash（2026-11-26 使用者定：
+# 非 flash 的訂閱付費模型要跳警報）——其餘從階梯剔除進 PAID_HELD 不派，進訂閱層時 TG 告知被擋名單。
+# =all 恢復全用（舊行為）；設空字串＝整個訂閱層停用。逐單 DCQ_MODELS 指定不走 POOL_PAID，天然豁免。
+PAID_OK="${DCQ_PAID_OK-opencode-go/deepseek-v4.1-flash}"
+PAID_HELD=""
+if [ "$PAID_OK" != all ] && [ -n "$POOL_PAID" ]; then
+  _pk=""
+  for _m in $POOL_PAID; do
+    case " $PAID_OK " in
+      *" $_m "*) _pk="$_pk${_pk:+ }$_m" ;;
+      *) PAID_HELD="$PAID_HELD${PAID_HELD:+ }$_m" ;;
+    esac
+  done
+  POOL_PAID="$_pk"
+fi
 # API 層（按量扣錢）：訂閱層之後，DCQ_ALLOW_API=1 才用；清冊 billing=api 且有 dc_id 的列。預設不開。
 POOL_API=""; [ "${DCQ_ALLOW_API:-0}" = 1 ] && POOL_API="${DCQ_POOL_API-$(cat_pool api slash) $(cat_pool api zen)}"
 POOL_API="${POOL_API# }"; POOL_API="${POOL_API% }"
@@ -878,7 +893,21 @@ pool_alert() {
   echo "dcq: WARN ${msg}" >&2
   [ "$(cat "$st" 2>/dev/null)" = "${bad:-single}" ] && return 0
   mkdir -p "$Q/logs"; echo "${bad:-single}" > "$st"
-  { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && { hpush "$msg" >/dev/null 2>&1 & }
+  { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v openbot-handoff >/dev/null && { openbot-handoff "$msg" >/dev/null 2>&1 & }
+  return 0
+}
+# 進訂閱層（付費額度）時 TG 告知：罕見且燒額度的事件，附核准可用與被擋名單（2026-11-26 使用者要求）。
+# openbot-handoff 限流 DCQ_PAID_TG_EVERY 秒（預設 600）。戳記內容是時間戳，stat 那套在 linux_stat_test 會炸，直接讀檔。
+paid_alert() {  # $1=id $2=task $3=核准可用的池
+  local id="$1" task="$2" avail="$3" st="$Q/logs/.paid-tg-last" now last msg
+  now=$(date +%s); last=$(cat "$st" 2>/dev/null || echo 0)
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  [ $((now - last)) -lt "${DCQ_PAID_TG_EVERY:-600}" ] && return 0
+  msg="💰 dcq 進訂閱層（付費額度）：$(basename "$task")　核准可用：${avail:-（無——全被 DCQ_PAID_OK 擋下）}"
+  [ -n "$PAID_HELD" ] && msg="${msg}　擋下未核准：${PAID_HELD}（放行：DCQ_PAID_OK=all，或逐單 DCQ_MODELS 指定）"
+  echo "dcq[$id] ${msg}" >&2
+  mkdir -p "$Q/logs"; echo "$now" > "$st"
+  { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v openbot-handoff >/dev/null && { openbot-handoff "${msg}　id=${id}" >/dev/null 2>&1 & }
   return 0
 }
 # enabled_providers／disabled_providers 明確排除的 provider＝這台刻意不用（例：M4 不開 openrouter／nvidia 直連），不算壞。
@@ -978,6 +1007,7 @@ cmd_plan() {
     [ -z "$z" ] || echo "  · 冷宮（0 PASS）：$z"
     [ "$order" = foo ] && echo "  · 純免費堅持：免費梯用盡等冷卻重來到 JOB_MAX，永不升訂閱"
     [ "$order" = sub ] || [ -z "$s" ] || echo "  · 訂閱（付費）：$s"
+    [ -z "$PAID_HELD" ] || echo "  · 擋下未核准付費（DCQ_PAID_OK）：$PAID_HELD"
     case "$c" in *codex/*) echo "  · CLI（訂閱額度）：$c" ;; ?*) echo "  · Claude（訂閱額度）：$c" ;; esac
     [ -z "$a" ] || echo "  · API（按量扣錢）：$a"
   done
@@ -1529,7 +1559,8 @@ run_job() {
     default) ;;
     foo|free|"") paid_pool="" api_pool="" ;;
     sub) cl_pool="$(fit_pool "$POOL_CLAUDE")"
-      [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1; } ;;
+      [ -n "$paid_pool" ] && { free_main="$pool"; pool="$paid_pool"; sub=1; paid=1
+        [ -n "$jm" ] || paid_alert "$id" "$task" "$paid_pool"; } ;;
     oo) local _oop; _oop="$(oo_part "$ph")"
         pool="$_oop $(not_in "$_oop" "$(oo_part "$fp_pool $pool")")"; pool="${pool# }"
         fp_pool="" pen_pool="" zero_pool="" tail_pool="" paid_pool="" api_pool=""
@@ -1613,9 +1644,15 @@ run_job() {
           zero=1; paid=1; pool="$zero_pool"; tried=""
           echo "dcq[$id] 兜底層用盡（${pick%% *}），fallback 冷宮（0 PASS 的免費模型）：${zero_pool}" >&2; continue
         fi
+        if [ "$sub" = 0 ] && [ -z "$paid_pool" ] && [ -n "$PAID_HELD" ] && { [ "$order" = default ] || [ "$order" = sub ]; }; then
+          # 白名單把訂閱層擋光了：不進場也要告知——這張單「本可用付費模型救」，批准後重派才有救
+          # （foo/free/oo 本就刻意不碰付費，不報）
+          sub=1; paid_alert "$id" "$task" ""
+        fi
         if [ "$sub" = 0 ] && [ -n "$paid_pool" ]; then
           sub=1; paid=1; pool="$paid_pool"; tried=""; echo 'PAID=1' >> "$jobfile"
-          echo "dcq[$id] 免費的層全用盡（${pick%% *}），fallback 訂閱層（付費）：${paid_pool}" >&2; continue
+          echo "dcq[$id] 免費的層全用盡（${pick%% *}），fallback 訂閱層（付費）：${paid_pool}" >&2
+          paid_alert "$id" "$task" "$paid_pool"; continue
         fi
         if [ "$cl" = 0 ] && [ -n "$cl_pool" ]; then
           cl=1; paid=1; pool="$cl_pool"; tried=""; grep -q '^PAID=1' "$jobfile" || echo 'PAID=1' >> "$jobfile"
@@ -1753,7 +1790,7 @@ run_job() {
 }
 
 # fail loud（2026-11-26 使用者定，起因派of）：結案失敗不靜默——本機帳 logs/fail.tsv 先行（TG 可能送不出去），
-# hpush 限流 DCQ_FAIL_TG_EVERY 秒一則（預設 600），壓掉的筆數附在下一則。人工取消不推（使用者自己殺的，不是意外）。
+# openbot-handoff 限流 DCQ_FAIL_TG_EVERY 秒一則（預設 600），壓掉的筆數附在下一則。人工取消不推（使用者自己殺的，不是意外）。
 # VERIFY_RUNS=0＝全死在上游（基礎設施問題）、>0＝有交件但驗收未過（工單或品質問題），訊息分開寫，處理方向不同。
 fail_loud() {  # $1=id $2=task $3=order $4=rc $5=試過幾模型 $6=VERIFY_RUNS
   local id="$1" task="$2" order="${3:-default}" rc="$4" n="$5" vr="$6" msg bl st now n last prev skipped why
@@ -1776,7 +1813,7 @@ fail_loud() {  # $1=id $2=task $3=order $4=rc $5=試過幾模型 $6=VERIFY_RUNS
     skipped=$((n - 1 - prev))
     [ "$skipped" -gt 0 ] && msg="${msg}（另有 ${skipped} 筆被限流，見 fail.tsv）"
     echo "$n" > "$st"
-    { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && { hpush "$msg" >/dev/null 2>&1 & }
+    { [ "${DC_PUSH:-}" = 1 ] || [ "$Q" = "$HOME/.dcq" ]; } && command -v openbot-handoff >/dev/null && { openbot-handoff "$msg" >/dev/null 2>&1 & }
   fi
 }
 
@@ -2295,6 +2332,10 @@ usage() {
   DCQ_POOL_TAIL      兜底層，免費與懲罰層用盡才用、排在訂閱層之前（預設＝清冊 billing=free、dc_id 有斜線的列；
                      設空字串＝不用）
   DCQ_ALLOW_API      1＝訂閱層後再接 API 層（清冊 billing=api 有 dc_id 的列，或 DCQ_POOL_API）；預設 0
+  DCQ_PAID_OK        訂閱付費白名單（空白分隔；預設只 opencode-go/deepseek-v4.1-flash）：
+                     名單外的訂閱模型從階梯剔除不派，進訂閱層時 TG 告知被擋名單。
+                     all＝全用（舊行為）；空字串＝整個訂閱層停用。逐單 DCQ_MODELS 指定天然豁免
+  DCQ_PAID_TG_EVERY  進訂閱層推播限流秒數（預設 600）
   DCQ_TIER           dcq add 沒給難度時用這個（沒設＝mid）
   DCQ_TRIAGE         1＝沒給難度時問本機 Laya（bin/triage）判；預設 0 不問
   DCQ_ORDER          層級順序，入列時記進工單：free＝只用免費、全敗就失敗（派of）、default＝免費優先、全敗升訂閱（派o，未設時的預設）、

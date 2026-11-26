@@ -30,7 +30,7 @@ alarm() {
   echo "freecheck: 警報 —— $1" >&2
   echo "freecheck: 已寫 ${ALARM}，dcq 會停止收單。確認是誤報就刪掉它。" >&2
   # 狀態目錄不是正式路徑（測試把 DCQ_HOME 指到暫存）不推，DC_PUSH=1 強制推（同 zen-gate）
-  { [ "${DC_PUSH:-}" = 1 ] || [ "$STATE" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && hpush "🚨 dispatch-router freecheck: $1" >/dev/null 2>&1
+  { [ "${DC_PUSH:-}" = 1 ] || [ "$STATE" = "$HOME/.dcq" ]; } && command -v openbot-handoff >/dev/null && openbot-handoff "🚨 dispatch-router freecheck: $1" >/dev/null 2>&1
   exit 3
 }
 
@@ -67,12 +67,12 @@ case "$verdict" in
     for m in "$@"; do case "$m" in *-free|big-pickle) ;; *) paid=1 ;; esac; done
     [ "$paid" = 1 ] || { echo "freecheck: ${msg}（免費模型不吃 Go 額度，照跑）" >&2; exit 0; }
     echo "freecheck: ${msg}" >&2
-    # TG 限流：DC_FREECHECK_TG_EVERY 秒（預設 1 小時）內只推一次，額度沒解除前每次呼叫都會撞到這裡。
+    # TG 限流：DC_FREECHECK_TG_EVERY 秒（預設 24 小時）內只推一次，額度沒解除前每次呼叫都會撞到這裡。
     ST="$STATE/.freecheck-tg-last"; now=$(date +%s)
     last=$(stat -c %Y "$ST" 2>/dev/null || stat -f %m "$ST" 2>/dev/null || echo 0)
-    if [ $((now - last)) -ge "${DC_FREECHECK_TG_EVERY:-3600}" ]; then
+    if [ $((now - last)) -ge "${DC_FREECHECK_TG_EVERY:-86400}" ]; then
       mkdir -p "$STATE" 2>/dev/null; touch "$ST"
-      { [ "${DC_PUSH:-}" = 1 ] || [ "$STATE" = "$HOME/.dcq" ]; } && command -v hpush >/dev/null && { hpush "🚨 dispatch-router freecheck: ${msg}" >/dev/null 2>&1 & }
+      { [ "${DC_PUSH:-}" = 1 ] || [ "$STATE" = "$HOME/.dcq" ]; } && command -v openbot-handoff >/dev/null && { openbot-handoff "🚨 dispatch-router freecheck: ${msg}" >/dev/null 2>&1 & }
     fi
     exit 5 ;;
   WARN*) echo "freecheck: ${verdict}（加白，不停單）" >&2 ;;

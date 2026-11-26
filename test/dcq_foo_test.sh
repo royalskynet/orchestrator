@@ -39,11 +39,9 @@ chmod +x "$T/bin/dc"
 export TRACE="$T/trace" CNT="$T/cnt"; : > "$TRACE"
 
 # 假 hpush：記推播內容（fail loud 驗證用）
-cat > "$T/bin/hpush" <<'EOQ'
-#!/usr/bin/env bash
-echo "$*" >> "$HPUSH_TRACE"
-EOQ
+printf '#!/bin/sh\necho "hpush $*" >> "%s/unexpected-push"\n' "$T" > "$T/bin/hpush"
 chmod +x "$T/bin/hpush"
+printf '#!/usr/bin/env bash\necho "$*" >> "$HPUSH_TRACE"\n' > "$T/bin/openbot-handoff"; chmod +x "$T/bin/openbot-handoff"
 
 # 假 foo lint：記 argv，stdout/stderr 都印一行，用來確認 dcq add 的 stdout 仍只有 job id
 cat > "$T/home/dev/fm-harness/bin/foo" <<'EOQ'
@@ -129,4 +127,5 @@ chk "fail.tsv 也落帳 zafail（foo）" "$(grep -c 'zafail' "$DCQ_HOME/logs/fai
 if grep -q 'order=free' "$T/hpush.trace" && grep -q '驗收未過' "$T/hpush.trace"; then echo "ok - of 失敗推播含 order 與原因"
 else echo "not ok - 推播內容：$(cat "$T/hpush.trace" 2>/dev/null)"; fail=1; fi
 
+[ ! -s "$T/unexpected-push" ] && echo "PASS 無人再叫舊指令 hpush" || { echo "FAIL 有程式還在叫舊指令 hpush：$(head -2 "$T/unexpected-push" 2>/dev/null)"; fail=1; }
 exit "$fail"
