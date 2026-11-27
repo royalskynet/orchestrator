@@ -38,7 +38,11 @@ tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
     if type == "string" then .
     elif .type == "assistant" then (.message.content[]? |
       if .type == "text" then .text elif .type == "tool_use" then "→ \(.name) \(.input | tostring | .[0:200])" else empty end)
-    elif .type == "result" then (if .is_error then "Error: claude-exec: \(.result // .subtype)" else "claude-exec: \(.subtype) turns=\(.num_turns)" end)
+    elif .type == "result" then
+      ((.usage.output_tokens // 0) | tostring) as $out |
+      (((.usage.input_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)) | tostring) as $in |
+      ((.total_cost_usd // 0) | tostring) as $cost |
+      "dc-usage: \($out) \($in) \($cost)\n" + (if .is_error then "Error: claude-exec: \(.result // .subtype)" else "claude-exec: \(.subtype) turns=\(.num_turns)" end)
     else empty end' | tee "$tmp"
 rc=${PIPESTATUS[0]}
 grep -q '^Error: claude-exec: ' "$tmp" && [ "$rc" = 0 ] && rc=1

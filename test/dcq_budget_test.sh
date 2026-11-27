@@ -92,6 +92,29 @@ unset DCQ_TOK_MAX DCQ_COST_MAX DCQ_JOB_TOK_MAX
 mk default
 run default
 chk "預設不殺" "$(grep -c '^OUT default m1' "$TRACE")" 1
+
+# issue #34：claude/*、codex/* 不經 opencode.db，改從 .out 最後一行 dc-usage: 記帳。
+# 假 claude 執行輸出含已知 dc-usage 行時，gaps.tsv 第 8-10 欄數值正確。
+cp "$T/bin/dc" "$T/bin/dc.bak"
+cat > "$T/bin/dc" <<'SH'
+#!/usr/bin/env bash
+n="$(basename "$1" .md)"; cwd="$2"; ms=$(( $(date +%s) * 1000 )); sid="${n}_${DC_FREE_MODEL}"
+echo "IN $n $DC_FREE_MODEL" >> "$TRACE"
+case "$DC_FREE_MODEL" in
+  claude/*|codex/*) echo "dc-usage: 44 55 0.66"; echo "OUT $n $DC_FREE_MODEL" >> "$TRACE"; sleep 1; exit 0 ;;
+  *) echo "OUT $n $DC_FREE_MODEL" >> "$TRACE"; exit 0 ;;
+esac
+SH
+chmod +x "$T/bin/dc"
+printf '# cliusage\n' > "$T/cliusage.md"
+DCQ_MODELS="claude/h1" dcq add "$T/cliusage.md" "$T/wj" >/dev/null
+DCQ_MODELS="claude/h1" DCQ_TOK_MAX=0 DCQ_COST_MAX=0 DCQ_JOB_TOK_MAX=0 dcq run -j 1 > "$T/cliusage.log" 2>&1
+cliline="$(awk -F'\t' '$2=="claude/h1"{last=$0} END{print last}' "$DCQ_HOME/logs/gaps.tsv")"
+chk "claude dc-usage out_tok" "$(printf '%s\n' "$cliline" | awk -F'\t' '{print $8}')" 44
+chk "claude dc-usage in_tok" "$(printf '%s\n' "$cliline" | awk -F'\t' '{print $9}')" 55
+chk "claude dc-usage cost" "$(printf '%s\n' "$cliline" | awk -F'\t' '{print $10}')" 0.66
+mv "$T/bin/dc.bak" "$T/bin/dc"
+
 DCQ_COST_MAX=0.5 mk cost
 chk "入列 COSTMAX" "$(sed -n 's/^COSTMAX=//p' "$DCQ_HOME"/pending/*.job)" 0.5
 run cost

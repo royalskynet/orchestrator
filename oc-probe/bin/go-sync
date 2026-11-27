@@ -66,15 +66,6 @@ def http(url, body=None, tok=None, method=None, timeout=90):
         return 0, type(e).__name__
 
 
-def notify(msg):
-    # 跟 oc-free-check 同一個推播出口：PATH 上有 hpush 才推，沒有就只寫 log。
-    # state 不是正式路徑（測試、手動試跑把 DCQ_GO_STATE 指到暫存）不推，DC_PUSH=1 強制推（同 zen-gate）
-    if os.environ.get('DC_PUSH') != '1' and STATE != H('~/.dcq/logs/go-models.json'):
-        return
-    if shutil.which('hpush'):
-        subprocess.run(['hpush', '[go-sync] ' + msg], capture_output=True, timeout=60)
-
-
 def scan(saved, dry):
     """週掃描。回 (rc, lines)。"""
     c, b = http(UPSTREAM, timeout=30)
@@ -113,8 +104,7 @@ def main(dry, force):
         rc, lines = scan(saved, dry)
     else:
         log('距上次掃描未滿', SCAN_EVERY_D, '天，略過')
-    if lines and not dry:
-        notify('\n'.join(lines))
+    # 模型上下架與自動同步結果都是純資訊：只寫 log，不進人眼通知。
     log('\n'.join(lines) or '無變動')
     return rc
 

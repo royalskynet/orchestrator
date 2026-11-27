@@ -1207,14 +1207,28 @@ stall_dump() {
   echo "dcq: stall_dump $model $sid 最後一則[role done tools reasoning字數]=${sum}" >&2
 }
 
+# claude/*、codex/* 不經 opencode.db：從該次嘗試 .out 的最後一行 dc-usage: 取累計值（issue #34）。
+# 格式：dc-usage: <out_tok> <in_tok> <cost>；多次印取最後一行。查不到印空、rc 0。
+dc_usage_from_out() {
+  local out="$1" line
+  [ -n "$out" ] && [ -r "$out" ] || return 0
+  line="$(grep '^dc-usage: ' "$out" 2>/dev/null | tail -1)" || return 0
+  [ -n "$line" ] || return 0
+  set -- $line
+  [ "$1" = "dc-usage:" ] || return 0
+  printf '%s %s %s\n' "${2:-0}" "${3:-0}" "${4:-0}"
+}
+
 # 這次嘗試燒了多少 token／錢（issue #26）：印 "out_tok in_tok cost"，查不到就印空、rc 0。
 # out_tok＝output＋reasoning；in_tok＝input＋cache.read＋cache.write。
 # 資料源＝opencode 本機 db（非公開契約，升版可能改）：跟 stall_dump 同條件找 session
 # （directory=cwd、time_created ≥ta、取最新一個），加總它所有 assistant 訊息（id 是主鍵，
 # 天然去重）。db 不在、找不到 session、sqlite 失敗都退回空欄——診斷不能拖累派工；
 # 查詢失敗另在 stderr 印一行。DCQ_OC_DB 可覆寫路徑（測試與非預設安裝用）。
+# $3 可選：該次嘗試 .out 路徑；$4 可選：模型名。claude/*、codex/* 改從 .out 取 dc-usage（#34）。
 oc_usage() {
-  local cwd="$1" ta="$2" db d dp sid
+  local cwd="$1" ta="$2" out="${3:-}" model="${4:-}" db d dp sid
+  case "$model" in claude/*|codex/*) dc_usage_from_out "$out"; return 0 ;; esac
   db="${DCQ_OC_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}"
   [ -r "$db" ] || return 0
   command -v sqlite3 >/dev/null 2>&1 || return 0
@@ -1317,7 +1331,7 @@ watch_oc() {
       loop_tp=$t
       if grep -q '^dc: 驗收 → ' "$out" 2>/dev/null; then loop_done=1; budget_done=1; fi
       if [ "$budget_on" = 1 ] && [ "$budget_done" = 0 ]; then
-        read -r u_out u_in u_cost <<<"$(oc_usage "$cwd" "$ta")"
+        read -r u_out u_in u_cost <<<"$(oc_usage "$cwd" "$ta" "$out" "$model")"
         budget_limit="$(awk -v t="$TOK_MAX" -v c="$COST_MAX" -v j="$JOB_TOK_MAX" -v o="${u_out:-0}" -v cost="${u_cost:-0}" -v used="$used" 'BEGIN {
           if (j>0 && used+o>j) printf "JOBTOKMAX 用量 %.0f／上限 %.0f", used+o,j
           else if (t>0 && o>t) printf "TOKMAX 用量 %.0f／上限 %.0f",o,t
@@ -1356,7 +1370,7 @@ watch_oc() {
     fi
     STALL_UPSTREAM=0; [ "$why" = stall ] && stall_dump "$out" "$cwd" "$ta" "$model"
     [ "$STALL_UPSTREAM" = 1 ] && { why=upstream; echo "dcq[$id] $model 整段 0 輸出，判上游不回（額度／排隊），不記模型的帳" >&2; }
-    killtree "$pid"; break
+    killtree "$pid" "$out"; break
   done
   wait "$pid" 2>/dev/null; rc=$?
   rm -f "$Q/running/$id.pid"
@@ -1367,9 +1381,9 @@ watch_oc() {
     elif grep -qE '^dc: (上游限流|上游不可用|Zen 免費閘道判濫用)' "$out" 2>/dev/null; then why=upstream; fi
   fi
   # 每次都記最大靜默間隔（STALL_S 的唯一校準依據）與這次嘗試的總秒數（自動重排的時間成本）
-  # 第 8–10 欄（issue #26）：out_tok、in_tok、cost——查不到 session／查詢失敗留空，
-  # rank_free 用第 8 欄校準 token 近邊警告；舊紀錄缺欄視為 0。
-  read -r u_out u_in u_cost <<<"$(oc_usage "$cwd" "$ta")"
+  # 第 8–10 欄（issue #26/#34）：out_tok、in_tok、cost。opencode 查 db；claude/*、codex/* 從 .out 最後一行 dc-usage: 取累計值。
+  # 查不到留空；rank_free 用第 8 欄校準 token 近邊警告；舊紀錄缺欄視為 0。
+  read -r u_out u_in u_cost <<<"$(oc_usage "$cwd" "$ta" "$out" "$model")"
   if [ -n "${u_out:-}" ]; then
     awk -v used="$used" -v out="$u_out" 'BEGIN { printf "%.0f\n", used+out }' > "$DC_PREFLIGHT_DIR/tok_used"
   fi
@@ -1446,7 +1460,7 @@ bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出�
   done
   for k in "${!ms[@]}"; do
     [ "$k" = "$win" ] && continue
-    [ -s "$Q/running/$id.bon$((k + 1)).pid" ] && killtree "$(cat "$Q/running/$id.bon$((k + 1)).pid")"
+    [ -s "$Q/running/$id.bon$((k + 1)).pid" ] && killtree "$(cat "$Q/running/$id.bon$((k + 1)).pid")" "$Q/logs/$id.bon$((k + 1)).$(fk "${ms[$k]}").out"
     kill "${bps[$k]}" 2>/dev/null
   done
   wait "${bps[@]}" 2>/dev/null
@@ -1462,7 +1476,7 @@ bon_run() {  # $1=id $2=task $3=cwd $4=t0 $5=tried $6=jobfile；PASS 印勝出�
         bon_out="$(awk -v n="$bon_out" -v base="$bon_used" 'BEGIN { printf "%.0f", n-base }')"
       else
         # 主動殺掉的落選者沒有完成 watch_oc 收尾，仍須計入已耗 token。
-        read -r bon_out _ <<<"$(oc_usage "${wts[$k]}" "$t0")"
+        read -r bon_out _ <<<"$(oc_usage "${wts[$k]}" "$t0" "$Q/logs/$id.bon$((k + 1)).$(fk "${ms[$k]}").out" "${ms[$k]}")"
       fi
       bon_total="$(awk -v n="$bon_total" -v out="${bon_out:-0}" 'BEGIN { printf "%.0f", n+out }')"
       [ ! -e "$bon_child/tok_exhausted" ] || : > "$DC_PREFLIGHT_DIR/tok_exhausted"
@@ -1699,7 +1713,7 @@ run_job() {
     # watch_oc 中途死掉（dcq 自身腳本錯，10-24 Linux GNU stat 實例）會零輸出：判 FATAL 不換模型（換誰都一樣崩），
     # 收掉它留下的 dc 程序與 running 標記，免得工單永遠卡 running、拿不到結束碼
     if [ -z "$rc" ]; then
-      [ -s "$Q/running/$id.pid" ] && killtree "$(cat "$Q/running/$id.pid")"; rm -f "$Q/running/$id.pid"
+      [ -s "$Q/running/$id.pid" ] && killtree "$(cat "$Q/running/$id.pid")" "$Q/logs/$id.$(fk "$model").out"; rm -f "$Q/running/$id.pid"
       rc=2; why=exit
       echo "dcq[$id] FATAL rc=2（watch_oc 沒交出結果：dcq 自身腳本錯，看上面的 bash 錯誤）" >&2
     fi
@@ -2064,10 +2078,52 @@ cmd_run() {
 # --- cancel ------------------------------------------------------------------
 # 先立標記再殺，順序不能反：反過來的話 run_job 會在看到標記前就把 rc 當模型失敗，
 # 直接換下一個模型重跑。dc 是 bash 殼，殺它不會帶走 opencode，所以殺整棵樹。
-killtree() {
+# 送 TERM 前先收好整棵樹；寬限 DCQ_KILL_GRACE 秒（預設 10）只在最外層算一次，沒消失就整棵送 KILL。
+_killtree_walk() {
   local p="$1" c
-  for c in $(pgrep -P "$p" 2>/dev/null); do killtree "$c"; done
-  kill -TERM "$p" 2>/dev/null || true
+  for c in $(pgrep -P "$p" 2>/dev/null); do _killtree_walk "$c"; done
+  _KT_LIST+=("$p")
+}
+# issue #32：升級 KILL 前留現場——行程樹狀態＋dc 輸出最後 20 行寫成 $Q/logs/killscene.<epoch>.<pid>。
+# 「dc 不理 TERM 空轉」的根因沒重現過，這份檔是下次唯一能查的證據（重開條件）。
+# 只做一次、整段限時 DCQ_KILL_SCENE_S 秒（預設 2）；任何一步失敗都只略過，不影響後面的 KILL。
+killscene() {
+  local p="$1" out="${2:-}" f sp t0
+  [ "${DCQ_KILL_SCENE:-1}" = 1 ] || return 0
+  [ -d "$Q/logs" ] || return 0
+  f="$Q/logs/killscene.$(now).$p"
+  ( umask 077
+    { echo "# killscene $(date +%F_%T) pid=$p tree=${_KT_LIST[*]}"
+      ps -o pid,ppid,stat,etime,command -p "${_KT_LIST[@]}"
+      [ -n "$out" ] && [ -r "$out" ] && { echo "# tail -20 $out"; tail -20 "$out" | brief_sanitize; }
+    } > "$f" 2>/dev/null
+  ) & sp=$!
+  t0=$(now)
+  while kill -0 "$sp" 2>/dev/null; do
+    [ $(( $(now) - t0 )) -ge "${DCQ_KILL_SCENE_S:-2}" ] && { kill -KILL "$sp" 2>/dev/null; break; }
+    sleep 0.1
+  done
+  wait "$sp" 2>/dev/null || true
+  if [ -s "$f" ]; then
+    echo "dcq: pid $p 不理 TERM，升級 KILL；現場留 $f" >&2
+  else rm -f "$f"; fi
+}
+killtree() {
+  local p="$1" out="${2:-}" grace="${DCQ_KILL_GRACE:-10}" t0 c
+  _KT_LIST=()
+  _killtree_walk "$p"
+  for c in "${_KT_LIST[@]}"; do kill -TERM "$c" 2>/dev/null || true; done
+  t0=$(now)
+  while kill -0 "$p" 2>/dev/null; do
+    [ $(( $(now) - t0 )) -ge "$grace" ] && break
+    sleep 0.2
+  done
+  if kill -0 "$p" 2>/dev/null; then
+    _KT_LIST=()
+    _killtree_walk "$p"
+    killscene "$p" "$out"
+    for c in "${_KT_LIST[@]}"; do kill -KILL "$c" 2>/dev/null || true; done
+  fi
 }
 cmd_cancel() {
   local id="${1:-}" pidf pid
@@ -2077,7 +2133,7 @@ cmd_cancel() {
   pidf="$Q/running/$id.pid"
   if [ -f "$pidf" ]; then
     pid="$(cat "$pidf")"
-    killtree "$pid"
+    killtree "$pid" "$(ls -t "$Q/logs/$id".*.out 2>/dev/null | head -1)"
     echo "dcq: 已標記取消並殺掉 ${id}（pid=$pid 及子程序）"
   elif [ -e "$Q/pending/$id.job" ]; then
     # 還在 pending 且沒人在跑它：直接結案，不留一張永遠不會被收走的標記
@@ -2371,6 +2427,9 @@ usage() {
   DCQ_RANK_PAID      cost＝訂閱層層內改用「每 PASS 成本」排序（沿用貝氏平滑；缺 token 資料的退回秒數）；
                      預設空＝照每 PASS 秒數。dcq rank 表格另有 tok/pass、cost/pass 兩欄（gaps.tsv 有第 8 欄才顯示）
   DCQ_STALL_S        輸出靜默幾秒判定停滯並換模型（預設 200；校準看 logs/gaps.tsv，dcq rank 近邊會警告）
+  DCQ_KILL_GRACE     送 TERM 後幾秒內行程沒消失就升級 KILL 整棵樹（預設 10；cancel/watchdog/bon 共用）
+  DCQ_KILL_SCENE     升級 KILL 前留現場檔 logs/killscene.*（行程樹＋輸出尾 20 行，issue #32 重開證據；
+                     預設 1，0＝關；整段限時 DCQ_KILL_SCENE_S 秒、預設 2，失敗不影響 KILL）
   DCQ_JOB_MAX        單張工單總時限秒數，含所有模型（預設 2700）
   DCQ_ATTEMPT_MAX    單隻模型一次嘗試的上限秒數，撞到就換下一隻（預設 600）
   DCQ_ATTEMPT_AUTO   逐模型嘗試上限（issue #29）：建議值＝該模型（該難度）視窗 PASS 秒數 p95×1.25，

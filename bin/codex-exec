@@ -40,6 +40,10 @@ tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
     if type == "string" then .
     elif .type == "item.completed" and .item.type == "agent_message" then .item.text
     elif .type == "item.started" and .item.type == "command_execution" then "→ \(.item.command[0:200])"
+    elif .type == "turn.completed" then
+      (((.usage.output_tokens // 0) + (.usage.reasoning_output_tokens // 0)) | tostring) as $out |
+      (((.usage.input_tokens // 0) + (.usage.cache_write_input_tokens // 0)) | tostring) as $in |
+      "dc-usage: \($out) \($in) 0"
     elif .type == "turn.failed" or .type == "error" then
       "Error: codex-exec: \(.error.message // .message // "unknown error")"
     else empty end' | tee "$tmp"

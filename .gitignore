@@ -3,3 +3,5 @@
 *.log
 catalog/*.lock
 catalog/*.tmp
+*.bak-*
+.audit-devil/

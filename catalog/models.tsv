@@ -30,8 +30,9 @@ free	opencode-run	opencode/iceman-free	ok	Zen /models 加掃 11-07	Zen 免費；
 free	opencode-run	opencode/inkling-2-small-free	removed	Zen /models 加掃 11-07	Zen 免費；自動新增，尚無實測；11-20 自動移出（Zen /models 加掃：上游無）		any
 free	opencode-run	opencode/longcat-2.5-free	removed	@opencode 推文 11-09	Zen 免費；自動新增，尚無實測；11-23 自動移出（Zen /models 加掃：上游無）		any
 free	opencode-run	opencode/hy4-flash-free	unverified	@opencode 推文 11-17	Zen 免費；自動新增，尚無實測	hy4-flash-free	any
-free	opencode-run	opencode/tidepool-alpha-free	unverified	Zen /models 加掃 11-19	Zen 免費；自動新增，尚無實測	tidepool-alpha-free	any
+free	opencode-run	opencode/tidepool-alpha-free	removed	Zen /models 加掃 11-19	Zen 免費；自動新增，尚無實測；11-26 自動移出（Zen /models 加掃：上游無）		any
 free	opencode-run	opencode/jev-1.13-free	unverified	Zen /models 加掃 10-23	Zen 免費；自動新增，尚無實測；10-31 自動移出（Zen /models 加掃：上游無）；11-20 自動恢復（Zen /models 加掃）	jev-1.13-free	any
+free	opencode-run	opencode/seaglass-alpha-free	unverified	Zen /models 加掃 11-26	Zen 免費；自動新增，尚無實測	seaglass-alpha-free	any
 free	opencode-run	opencode-go/longcat-2.5-preview-free	removed	calllog 10396/11502	Go 免費（Go API 可直打）；OmniRoute go-free 首棒；10-23 自動移出（go-sync 週掃：上游無）		any
 free	opencode-run	opencode-go/step-5-preview-free	flaky	calllog 14/215	Go 免費		any
 free	opencode-run	opencode-go/beam-free	ok	gaps 12 跑 8 過，中位 71s（10-21）	Go 免費；樣本少	opencode-go/beam-free	any
