@@ -61,7 +61,7 @@ Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|m
 
 ## 工單
 
-格式契約（一個驗收 shell 區塊、區塊外「預期：」行、`## 禁止` 段、≤40 行、標題用 `##`）見 `~/.claude/skills/deep/SKILL.md` 的「任務檔」段。`dcq add` 前會跑 deep-lint 與 `wo-verify --dry`，不過就不入列。
+格式契約（一個驗收 shell 區塊、區塊外「預期：」行、`## 禁止` 段、≤40 行、標題用 `##`）見 `~/.claude/skills-archive/deep/SKILL.md` 的「任務檔」段。`dcq add` 前會跑 deep-lint 與 `wo-verify --dry`，不過就不入列。
 
 免費池的限制是逾時、無 prompt caching、可用性波動，工單照這幾條寫：
 
@@ -97,7 +97,7 @@ Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|m
 - 預設實作執行人＝派of（`DCQ_ORDER=free`，只用免費，全敗即失敗）。要訂閱優先才派os；唯一指定 DeepSeek flash 用派od。API 墊底要 `DCQ_ALLOW_API=1`，只有這個才問使用者。使用者明說派o／派of／派os／派od 才走對應順序。
 - 機械活、多步工單、能寫成一條驗收的改動，由主 session 主動提出派of（不套 5 分鐘門檻，分流以 ds-claude 為準），派前不問、不等答覆。goal state 有 `nightnav.authorized` 的批次交 `/nightnav` 夜裡跑。完工由 wo-verify 機械判定，exit code 說了算。
 - ds-run 不再是獨立路線：實作與重試統一走 dcq fallback 階梯；唯讀查詢用 `dcq ask <cwd> <問題>`，跨模型審查用 `dcq review <repo cwd>`，`task/SPEC.md`＋`scope.txt`＋`verify.sh` 契約用 `dcq contract <repo cwd>`。
-- ds-claude 開著時（預設，`/ds-claude off` 關），沒寫 model、Sonnet 級、Haiku 級子代理都改派 foo（Haiku 用 easy）。hook `subagent-model-remind.sh`（symlink 到公開版 `subagent-redirect.sh`，對照表 `~/dev/ether-projects/ds-claude-local/redirect.json`）會擋並給 foo 指令。`Explore`／`o-worker`／`Plan`／`reviewer` 例外，要留 Claude 子代理的在 prompt 加 `ds-keep`。
+- ds-claude 開著時（per-agent 政策，`~/.config/ds-claude/policy.conf`），沒寫 model、Sonnet 級、Haiku 級子代理照 policy 的 `order.<難度>` 改派（目前 easy=of、mid/hard=od），hook `subagent-redirect.sh` 會擋並給 `ds-dispatch.sh` 指令。`Explore`／`o-worker`／`Plan`／`reviewer` 例外，要留 Claude 子代理的在 prompt 加 `ds-keep`。
 - 含憑證、個資、LCT／CoinW 內容的不送外部 provider，主 session 自己做。codex 只接它專屬的執行位。
 
 ## 查哪裡
