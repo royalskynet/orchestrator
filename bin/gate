@@ -131,7 +131,9 @@ scope_strict="$(_scope_strict)"
 scope_w="$(_scope_writes '[]')"; [ -n "$scope_strict" ] && scope_w="$scope_strict"
 scope_head=""; scope_pre=""
 if scope_head="$(git -C "$d" rev-parse HEAD 2>/dev/null)"; then
-  scope_pre="$(git -C "$d" status --porcelain 2>/dev/null | sed 's/^...//')"
+  # 必須與完工時的 _scope_changed 同一種列法：git status 對未追蹤目錄只給 「?? task/」，
+  # 完工後 ls-files 卻展開成 task/input 個別檔；寫死比對不到會把派工前已存在的輸入誤判越界。
+  scope_pre="$(_scope_changed)"
 else scope_head=""; scope_w=""; fi
 
   printf '%s\n' "$scope_head" > "$pf_dir/scope.head" || exit 2

@@ -4,13 +4,13 @@
 
 - **模型來源不限 opencode**：Zen 免費池、opencode-go 訂閱、直連的 Kilo／NVIDIA NIM／Groq／Google AI Studio／OpenRouter 免費模型（不必裝 OmniRoute）、經 OmniRoute 轉接的供應商（選配）、付費 API，全部登記在 `catalog/models.tsv`，同一套階梯調度。opencode CLI 只當 agent 外殼（工具呼叫、檔案編輯）。
 - **智慧加權**：每隻模型依 `gaps.tsv` 實績算「平均幾秒換到一次通過」，加貝氏平滑（樣本少的先拉向全池平均），層內自動重排。0 PASS 的進冷宮，停滯率高的進懲罰層。
-- **多層 fallback**：免費 → 懲罰 → 兜底 → 冷宮 → 訂閱 → API（API 預設關）。觸發詞：派o＝免費優先、全敗升訂閱；派foo＝純免費堅持、用盡等冷卻重來、永不升訂閱；派of＝只用免費、全敗就失敗；派os＝訂閱優先。
+- **多層 fallback**：免費 → 懲罰 → 兜底 → 冷宮 → 訂閱 → API（API 預設關）。觸發詞：派o／派of＝只用免費、全敗就失敗（預設）；派os＝訂閱優先；派od＝唯一指定 DeepSeek flash。
 - **完成由腳本判定**：exit code＝工單自帶驗收腳本（`wo-verify`）的結果，不是模型自述。
 - `dc` 派單張，`dcq` 併發跑多張（cwd 互斥、per-model 冷卻、停滯 watchdog、Zen 與 Go 免費額度分開計）。
 
 這個 repo 是私有正本的脫敏鏡像，每週自動同步覆蓋。直接 push 到這裡的修補會在下次同步被倒回（issue #14）；同步腳本現在遇到這種 commit 會停推並告警，但修補仍要開 issue 或 PR，由維護者移植進正本。
 
-舊名 dispatch-router（2026-10-22 改名）；底層指令 `dc`／`dcq` 不變。與 [`deep-agent`](https://github.com/royalskynet/deep-agent) 平行：deep 走 deepclaude 在沙箱外跑多步自主任務。
+舊名 dispatch-router（2026-10-22 改名）；底層指令 `dc`／`dcq` 不變。派deep 已封存，不再是 Orchestrator 的使用介面。
 
 ## Quick install／快速安裝
 
@@ -202,6 +202,10 @@ hermes --provider opencode-go -m longcat-2.5-preview-free -z '...' # PONG, rc=0
 
 教訓：要幫工具補上游的協定細節之前，先 grep 那支工具的原始碼找 provider 名與標頭名 —— 修過的坑會留在註解裡。
 
+## 唯讀查詢與 review
+
+`dcq ask <cwd> <問題>` 會產生唯讀查詢工單並走同一條模型階梯，答案落在 `<cwd>/task/notes.md`。`dcq review <repo cwd>` 會審查未推送 commit、工作樹與未追蹤改動，裁決落在 `<repo>/task/review.md`。`dcq contract <repo cwd>` 承接原 ds-run 的 `task/SPEC.md`、`task/scope.txt`、`task/verify.sh` 契約；三種入口都只生成 dcq 工單，實作與重試統一走 dcq fallback、watchdog、scope 與驗收 pinning，不再有獨立 ds-run 路線。
+
 ## dcq — 併發跑者
 
 `dc` 一次一張。`dcq` 是它的佇列前端：工單丟進去，N 個 slot 併發跑，成敗總表出來。
@@ -346,7 +350,7 @@ Claude Code（`claude-code` 列，沒有 `dc_id`）、Codex 也在清冊裡（`s
 - 半開：閘到期但還有連敗計數時，dcq 把 zen 的併發上限壓到 1，只放一個探測。
 - 探測的請求被上游正常回應（rc=0、沒有濫用字樣）就 `zen-gate ok` 清掉計數。判準是請求成功，不是驗收通過。
 
-層級順序每張工單入列時記下（`DCQ_ORDER`）：`default` 免費優先（派o）、`free` 只用免費、全敗就失敗（派of）、`foo` 純免費堅持、用盡等冷卻重來整梯、永不升訂閱（派foo）、`sub` 訂閱優先（派os）。`dcq plan <task.md>...` 在派工前印出每張的難度和會走的層，不入列。
+層級順序每張工單入列時記下（`DCQ_ORDER`）：`free` 只用免費、全敗就失敗（派o／派of，預設）、`sub` 訂閱優先（派os）。`dcq plan <task.md>...` 在派工前印出每張的難度和會走的層，不入列。
 
 系統一模型（Laya、Jev）只回結構化判斷，不生成文字，另列在 `catalog/judges.tsv`，dcq 不派。
 

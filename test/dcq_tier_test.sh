@@ -124,15 +124,15 @@ ls "$DCQ_HOME/failed" | grep -q 'of' && ok "of 免費全敗就結案失敗" || b
 [ "$(grep '^IN os ' "$TRACE" | head -1 | awk '{print $3}')" = opencode-go/g1 ] && ok "os 第一棒是訂閱層" || bad "os 第一棒：$(grep '^IN os ' "$TRACE" | head -1)"
 DCQ_ORDER=default dcq add "$T/tasks/od.md" "$T/w1" mid >/dev/null 2>&1; : > "$TRACE"
 DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 dcq run -j 1 >/dev/null 2>&1
-[ "$(grep '^IN od ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "za opencode-go/g1 " ] && ok "派o 免費先、訂閱後" || bad "派o 順序：$(grep '^IN od ' "$TRACE")"
-# 呼叫端漏帶 DCQ_ORDER＝派o（default），免費全敗可升訂閱層（10-21 使用者定，取代 10-20 的 of 預設）
+[ "$(grep '^IN od ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "za opencode-go/g1 " ] && ok "legacy default 免費先、訂閱後" || bad "legacy default 順序：$(grep '^IN od ' "$TRACE")"
+# 呼叫端漏帶 DCQ_ORDER＝派o／派of，預設只用免費，免費全敗即失敗
 echo "# on" > "$T/tasks/on.md"
-id="$(env -u DCQ_ORDER dcq add "$T/tasks/on.md" "$T/w1" mid 2>/dev/null)"
-grep -qx 'ORDER=default' "$DCQ_HOME/pending/$id.job" && ok "沒給 DCQ_ORDER 記 default" || bad "沒給 DCQ_ORDER 記成：$(grep ORDER "$DCQ_HOME/pending/$id.job")"
+id="$( (unset DCQ_ORDER; dcq add "$T/tasks/on.md" "$T/w1" mid) 2>/dev/null)"
+grep -qx 'ORDER=free' "$DCQ_HOME/pending/$id.job" && ok "沒給 DCQ_ORDER 記 free" || bad "沒給 DCQ_ORDER 記成：$(grep ORDER "$DCQ_HOME/pending/$id.job")"
 : > "$TRACE"; DCQ_AUTORANK=0 DCQ_ALLOWED_FAILS=9 dcq run -j 1 >/dev/null 2>&1
-[ "$(grep '^IN on ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "za opencode-go/g1 " ] && ok "沒給 DCQ_ORDER 免費全敗升訂閱" || bad "沒給 DCQ_ORDER 順序：$(grep '^IN on ' "$TRACE")"
-out="$(env -u DCQ_ORDER DCQ_AUTORANK=0 dcq plan "$T/tasks/on.md" 2>&1)"
-if echo "$out" | grep -q '訂閱'; then ok "plan 沒給 DCQ_ORDER 列出訂閱層"; else bad "plan 沒給 DCQ_ORDER 沒列訂閱層：$out"; fi
+[ "$(grep '^IN on ' "$TRACE" | awk '{print $3}' | tr '\n' ' ')" = "za " ] && ok "沒給 DCQ_ORDER 只用免費" || bad "沒給 DCQ_ORDER 順序：$(grep '^IN on ' "$TRACE")"
+out="$( (unset DCQ_ORDER; DCQ_AUTORANK=0 dcq plan "$T/tasks/on.md") 2>&1)"
+if echo "$out" | grep -q '訂閱'; then bad "plan 沒給 DCQ_ORDER 列出訂閱層：$out"; else ok "plan 沒給 DCQ_ORDER 不列訂閱層"; fi
 out="$(DCQ_ORDER=sub DCQ_AUTORANK=0 dcq plan "$T/tasks/os.md" 2>&1)"
 echo "$out" | grep -q '1 訂閱：opencode-go/g1' && echo "$out" | grep -q '2 免費 opencode：za' && ok "plan sub 順序與實跑一致" || bad "plan sub：$out"
 out="$(DCQ_ORDER=free DCQ_AUTORANK=0 dcq plan "$T/tasks/of.md" 2>&1)"

@@ -67,7 +67,7 @@ fi
 # writes: 範圍行（strict 專屬）：dc 派工靠它判 scope，缺了就只能事後看 diff。
 if [ -n "$strict" ] && ! awk '
   /^```/ { fence = !fence; next }
-  !fence && /^[[:space:]]*writes[：:][[:space:]]*[^[:space:]]/ { found = 1 }
+  !fence && /^[[:space:]]*writes!?[：:][[:space:]]*[^[:space:]]/ { found = 1 }
   END { exit !found }
 ' "$wo"; then
   echo 'LINT FAIL: 缺少 fence 外的 writes: 範圍行（dc 派工無法判 scope）'
