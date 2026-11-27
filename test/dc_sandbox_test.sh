@@ -22,6 +22,7 @@ export DC_FREECHECK=off DC_NO_TIMEOUT_WARN=1 DC_NEGCTL=0
 unset DC_LOCK_HELD
 cat > "$T/bin/opencode" <<'EOS'
 #!/usr/bin/env bash
+[ -n "${FAKE_CFG:-}" ] && printf '%s' "${OPENCODE_CONFIG_CONTENT:-}" > "$FAKE_CFG"
 { cat "$HOME/.creds/kv/CFG.txt"; cat "$HOME/.creds/kv/K.txt"; cat "$HOME/.claude/projects/p/s.jsonl"; ls "$HOME/.creds/kv"; cat in.txt; } > "$FAKE_OUT" 2>/dev/null
 exit 0
 EOS
@@ -32,13 +33,18 @@ fail=0
 chk() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1: got '$2' want '$3'"; fail=1; fi; }
 has() { grep -qx "$1" "$T/out" && echo y || echo n; }
 
-FAKE_OUT="$T/out" "$OC" "$T/t.md" "$T/r" >"$T/o" 2>&1
-chk "預設：dc rc=0" "$?" "0"
-chk "預設：讀不到 .creds" "$(has SECRET)" "n"
-chk "預設：讀不到 .claude/projects" "$(has TRANSCRIPT)" "n"
-chk "預設：目錄本身也列不出（11354）" "$(has K.txt)" "n"
-chk "預設：工單 cwd 照讀" "$(has OK)" "y"
-chk "預設：opencode.json 引用的 kv 檔放行" "$(has CFGKEY)" "y"
+FAKE_OUT="$T/out" FAKE_CFG="$T/cfg" "$OC" "$T/t.md" "$T/r" >"$T/o" 2>&1
+chk "plugin：dc rc=0" "$?" "0"
+chk "plugin：注入 opencode-sandbox@0.3.0" "$(jq -r '.plugin[]?' "$T/cfg" 2>/dev/null | grep -Fx '@hamzaabili/opencode-sandbox@0.3.0' >/dev/null && echo y || echo n)" "y"
+chk "plugin wiring：無外層 sandbox（fake 可讀，真隔離另驗）" "$(has SECRET)" "y"
+
+FAKE_OUT="$T/out" DC_SANDBOX_MODE=legacy "$OC" "$T/t.md" "$T/r" >"$T/o" 2>&1
+chk "legacy：dc rc=0" "$?" "0"
+chk "legacy：讀不到 .creds" "$(has SECRET)" "n"
+chk "legacy：讀不到 .claude/projects" "$(has TRANSCRIPT)" "n"
+chk "legacy：目錄本身也列不出（11354）" "$(has K.txt)" "n"
+chk "legacy：工單 cwd 照讀" "$(has OK)" "y"
+chk "legacy：opencode.json 引用的 kv 檔放行" "$(has CFGKEY)" "y"
 
 FAKE_OUT="$T/out" DC_SANDBOX=0 "$OC" "$T/t.md" "$T/r" >"$T/o" 2>&1
 chk "DC_SANDBOX=0：讀得到 .creds（測試會抓外洩）" "$(has SECRET)" "y"

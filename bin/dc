@@ -208,9 +208,17 @@ export OPENCODE_DISABLE_CLAUDE_CODE=1
 # 模型自跑慢測試（dcq_test 實測 164s）被砍後會重跑同一條，撞 dcq 的 spin／slow（10-21 WO-1/2 二十個嘗試）。
 # 300s ≈ 164s×1.8。dcq watchdog 在工具跑時暫停 stall／spin，暫停時間的上限就是這個值。
 export OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS="${OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS:-300000}"
+# S1：opencode shell 工具隔離採用 opencode-sandbox plugin（Seatbelt 內清 env、合成 HOME，並擋 kern.procargs*）。
+# legacy 保留舊的外層 sandbox-exec 包整個 opencode；off 只用於對照測試。macOS 不能 nested sandbox，所以 plugin 模式不再外套 sandbox-exec。
+_sandbox_mode="${DC_SANDBOX_MODE:-plugin}"
+[ "${DC_SANDBOX:-1}" = 0 ] && _sandbox_mode=off
+_osb_pkg='@hamzaabili/opencode-sandbox@0.3.0'
 _cc="${OPENCODE_CONFIG_CONTENT:-}"; [ -n "$_cc" ] || _cc='{}'
 # 用 jq 深度合併（*）而不是整份覆蓋：呼叫端自己帶的 OPENCODE_CONFIG_CONTENT 不能被蓋掉。
-_cc="$(printf '%s' "$_cc" | jq -c --arg f "$(dirname "$(dirname "$(readlink -f "$0")")")/executor-rules.md" '. * {permission:{skill:"deny"}, instructions:[$f]}' 2>/dev/null)"
+_cc="$(printf '%s' "$_cc" | jq -c --arg f "$(dirname "$(dirname "$(readlink -f "$0")")")/executor-rules.md" --arg osb "$_osb_pkg" --arg mode "$_sandbox_mode" '
+  . * {permission:{skill:"deny"}, instructions:[$f]}
+  | if $mode == "plugin" then .plugin = (((if (.plugin|type) == "array" then .plugin else [] end) + [$osb]) | unique) else . end
+' 2>/dev/null)"
 [ -n "$_cc" ] || { echo "dc: OPENCODE_CONFIG_CONTENT 不是合法 JSON，無法合併 permission.skill=deny 與 executor-rules.md" >&2; exit 2; }
 export OPENCODE_CONFIG_CONTENT="$_cc"
 
@@ -377,7 +385,10 @@ case "$m" in */*) case "$m" in opencode/*|opencode-go/*-free) ocfree=1 ;; *) ocf
 # 第三方模型的執行人禁讀對話紀錄與憑證（fixindex 11507：換 HOME／opencode permission 都擋不住 shell 絕對路徑）。
 # claude-exec 要寫自己的 transcript，不套；codex-exec 套（codex 自身沙箱關掉，見 bin/codex-exec）；.local/share/opencode 是 --standalone 必讀，不擋。DC_SANDBOX=0 關。
 sbx=(); case "$m" in codex/*) sbx_codex=1 ;; *) sbx_codex=0 ;; esac
-if { [ "${ocrun[*]}" = "opencode run" ] || [ "$sbx_codex" = 1 ]; } && [ "${DC_SANDBOX:-1}" != 0 ] && command -v sandbox-exec >/dev/null; then
+_outer_sandbox=1
+[ "${ocrun[*]}" = "opencode run" ] && [ "$_sandbox_mode" = plugin ] && _outer_sandbox=0
+[ "$_sandbox_mode" = off ] && _outer_sandbox=0
+if { [ "${ocrun[*]}" = "opencode run" ] || [ "$sbx_codex" = 1 ]; } && [ "$_outer_sandbox" = 1 ] && command -v sandbox-exec >/dev/null; then
   _r="$(cd "$HOME" && pwd -P)"
   # opencode.json 的 {file:~/.creds/kv/X.txt} 是 opencode 自己啟動要讀的 provider key，逐檔放行（只限 kv/ 下、只讀）；
   # 全擋會讓每隻模型都報「Configuration is invalid … bad file reference」（2026-10-28 全池失敗）。
