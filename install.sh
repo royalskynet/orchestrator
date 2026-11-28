@@ -8,6 +8,7 @@ mkdir -p ~/.local/bin ~/.claude/skills
 
 ln -sfn "$REPO/bin/dc" ~/.local/bin/dc
 ln -sfn "$REPO/bin/dcq" ~/.local/bin/dcq
+ln -sfn "$REPO/bin/o" ~/.local/bin/o
 ln -sfn "$REPO/bin/zen-gate" ~/.local/bin/zen-gate
 # PATH 上的 wo-verify 也由本 repo 提供（手動驗收、其他腳本用）；dc 自己不走 PATH
 ln -sfn "$REPO/bin/wo-verify" ~/.local/bin/wo-verify
@@ -31,7 +32,7 @@ done
 
 echo "Installed symlinks:"
 _skills=""; for _d in $SKILL_DIRS; do _skills="$_skills $_d/o"; done
-for t in ~/.local/bin/dc ~/.local/bin/dcq ~/.local/bin/zen-gate ~/.local/bin/wo-verify ~/.local/bin/freepool-guard $_skills; do
+for t in ~/.local/bin/dc ~/.local/bin/dcq ~/.local/bin/o ~/.local/bin/zen-gate ~/.local/bin/wo-verify ~/.local/bin/freepool-guard $_skills; do
   ls -l "$t"
   [ -e "$t" ] || { echo "DANGLING: $t"; exit 1; }
 done

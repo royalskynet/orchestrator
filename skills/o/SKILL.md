@@ -28,6 +28,8 @@ description: Orchestrator：把工單派給本機免費／訂閱 LLM 當執行�
 | 派os | `sub` | 訂閱先，用盡回免費，API 墊底 |
 | 派od | （不用）| `DCQ_MODELS=opencode-go/deepseek-v4.1-flash dcq add …`：只跑 DeepSeek flash（Go 訂閱），失敗不換層 |
 
+`default`／`foo`／`oo` 只留內部相容舊工單，不再是公開派法。`DCQ_ORDER` 沒給時預設 `free`。
+
 「派o <名稱>」→ plan 與 add 都多帶 `DCQ_PREFER=<名稱>`（子字串、不分大小寫，只影響免費層排序）。`DCQ_ORDER`／`DCQ_PREFER` 在 `dcq add` 時寫進 job 檔，事後改要重新 add。
 
 ## 派 Codex
@@ -58,6 +60,10 @@ wo-verify <task.md> --dry          # 旗標在檔名之後（放前面會 exit 2
 ```
 
 Index：`dcq run [-j N]`（前景，呼叫端死就跟著死）`dcq rank [easy|mid|hard]` `dcq rescan` `dcq doctor [--fix]` `dcq clear` `dcq help`；`freepool-guard scan|status|pool|verify|guard|propose|probe|daily`（`--help`）；`zen-gate until|check|trip|ok|halfopen`；`freecheck`；`dc|wo-verify|deep-lint --help`；`wo-verify <task.md> --dump|--pinned <script>`。
+
+## delegate-guard（已併入 o）
+
+`o delegate on|off|status` 控制派工守門。狀態檔是 `~/.claude/delegate-guard.off`：存在＝off，不存在＝on；hook 每次呼叫重讀，切換立刻生效。它會在主 session 做量大低難度機械活時建議或直接改派 o-worker，並要求派工單帶 `## 驗收`、完工後用 pinned `wo-verify` 重驗。log 在 `~/.claude/logs/delegate-guard.log`。
 
 ## 工單
 

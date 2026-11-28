@@ -7,6 +7,7 @@
 - **多層 fallback**：免費 → 懲罰 → 兜底 → 冷宮 → 訂閱 → API（API 預設關）。觸發詞：派o／派of＝只用免費、全敗就失敗（預設）；派os＝訂閱優先；派od＝唯一指定 DeepSeek flash。
 - **完成由腳本判定**：exit code＝工單自帶驗收腳本（`wo-verify`）的結果，不是模型自述。
 - `dc` 派單張，`dcq` 併發跑多張（cwd 互斥、per-model 冷卻、停滯 watchdog、Zen 與 Go 免費額度分開計）。
+- `o` 是使用者入口：`o delegate on|off|status` 開關已併入的 delegate-guard；其餘參數轉交 `dcq`。
 
 這個 repo 是私有正本的脫敏鏡像，每週自動同步覆蓋。直接 push 到這裡的修補會在下次同步被倒回（issue #14）；同步腳本現在遇到這種 commit 會停推並告警，但修補仍要開 issue 或 PR，由維護者移植進正本。
 

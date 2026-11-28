@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "delegate-guard",
+  "description": "Suggests or reroutes long, mechanical main-session work to the o dispatcher.",
+  "owner": {
+    "name": "royalskynet"
+  },
+  "plugins": [
+    {
+      "name": "delegate-guard",
+      "description": "Suggest-or-reroute guard for long, low-difficulty mechanical work; `o delegate` toggles it.",
+      "source": "./delegate-guard",
+      "category": "productivity"
+    }
+  ]
+}

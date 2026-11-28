@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "delegate-guard",
+  "version": "0.3.5",
+  "description": "Nudges the main session to delegate long, high-volume, low-difficulty mechanical work: counts tool calls per user turn (context-weighted), same-tool multi-file edits, big outputs and hard keywords. Low signals add a delegate suggestion; high-precision signals reroute (deny until o-worker is actually dispatched, max 3 per turn). Tickets to o must carry an acceptance block; after o finishes, the main session re-runs the pinned acceptance via wo-verify. Laya only tie-breaks task scoring and never blocks. Switch with `o delegate on|off|status`.",
+  "author": {
+    "name": "royalskynet"
+  }
+}

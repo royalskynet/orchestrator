@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# o — Orchestrator 使用者入口。delegate 子指令控制 delegate-guard；其餘轉交 dcq。
+set -euo pipefail
+SELF="$0"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
+done
+HERE="$(cd "$(dirname "$SELF")" && pwd -P)"
+case "${1:-}" in
+  delegate)
+    shift
+    case "${1:-status}" in
+      on|off|status) exec bash "$HERE/../delegate-guard/scripts/toggle.sh" "${1:-status}" ;;
+      *) echo "usage: o delegate on|off|status" >&2; exit 2 ;;
+    esac
+    ;;
+  ""|help|-h|--help)
+    echo "o delegate on|off|status  # 開關 delegate-guard"
+    echo "o <dcq args...>           # 轉交 dcq"
+    ;;
+  *) exec "$HERE/dcq" "$@" ;;
+esac

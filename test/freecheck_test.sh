@@ -12,7 +12,7 @@ case "$*" in *usage*) printf '%s' "$FAKE_USAGE" ;; *) echo '["longcat-2.5-previe
 EOF
 printf '#!/bin/sh\necho "hpush $*" >> "%s/push"\n' "$T" > "$T/bin/hpush"
 chmod +x "$T/bin/"*
-export OPENCODE_GO_API_KEY=fake DCQ_HOME="$T/q" PATH="$T/bin:$PATH"
+export OPENCODE_GO_API_KEY=fake DC_FREECHECK=on DCQ_HOME="$T/q" PATH="$T/bin:$PATH"
 
 fail=0
 chk() { # name usage want_rc want_alarm [model]
